@@ -152,7 +152,7 @@
       "Start VPN",
       "Verify traffic is forwarded through proxy"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F016",

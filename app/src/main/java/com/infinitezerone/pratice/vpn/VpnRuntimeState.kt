@@ -1,5 +1,6 @@
 package com.infinitezerone.pratice.vpn
 
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -20,6 +21,7 @@ data class RuntimeSnapshot(
 )
 
 object VpnRuntimeState {
+    private const val TAG = "PraticeVPN"
     private val timestampFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
     private const val MAX_LOG_LINES = 40
 
@@ -48,6 +50,7 @@ object VpnRuntimeState {
 
     fun appendLog(message: String) {
         val entry = "[${LocalTime.now().format(timestampFormatter)}] $message"
+        Log.i(TAG, message)
         _state.update { snapshot ->
             val updatedLogs = (listOf(entry) + snapshot.logs).take(MAX_LOG_LINES)
             snapshot.copy(logs = updatedLogs)

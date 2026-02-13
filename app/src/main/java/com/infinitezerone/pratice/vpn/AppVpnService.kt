@@ -34,6 +34,7 @@ class AppVpnService : VpnService() {
     private var activeProxyHost: String? = null
     private var activeProxyPort: Int = -1
     private var bridgeJob: Job? = null
+    private var statsJob: Job? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startJob: Job? = null
     @Volatile
@@ -91,6 +92,7 @@ class AppVpnService : VpnService() {
         unregisterNetworkCallback()
         startJob?.cancel()
         bridgeJob?.cancel()
+        statsJob?.cancel()
         stopBridge()
         serviceScope.cancel()
         vpnInterface?.close()
@@ -246,6 +248,7 @@ class AppVpnService : VpnService() {
                 }
             }
         }
+        startStatsMonitor()
         return true
     }
 
@@ -255,6 +258,28 @@ class AppVpnService : VpnService() {
             VpnRuntimeState.appendLog("tun2socks bridge stopped.")
         } catch (_: Throwable) {
             // Native bridge may already be stopped.
+        }
+    }
+
+    private fun startStatsMonitor() {
+        statsJob?.cancel()
+        statsJob = serviceScope.launch {
+            var lastSnapshot: String? = null
+            while (!isShuttingDown) {
+                try {
+                    val stats = TProxyService.TProxyGetStats()
+                    if (stats != null && stats.isNotEmpty()) {
+                        val snapshot = stats.joinToString(prefix = "[", postfix = "]")
+                        if (snapshot != lastSnapshot) {
+                            lastSnapshot = snapshot
+                            VpnRuntimeState.appendLog("tun2socks stats=$snapshot")
+                        }
+                    }
+                } catch (_: Throwable) {
+                    // Bridge not ready or already stopped.
+                }
+                delay(2_000)
+            }
         }
     }
 
