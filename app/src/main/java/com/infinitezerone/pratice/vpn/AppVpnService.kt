@@ -17,6 +17,8 @@ import androidx.core.content.ContextCompat
 import com.infinitezerone.pratice.R
 import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.config.RoutingMode
+import org.amnezia.awg.hevtunnel.TProxyService
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,12 +33,15 @@ class AppVpnService : VpnService() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var activeProxyHost: String? = null
     private var activeProxyPort: Int = -1
+    private var bridgeJob: Job? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startJob: Job? = null
     @Volatile
     private var startFailed = false
     @Volatile
     private var stopAlreadyReported = false
+    @Volatile
+    private var isShuttingDown = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val host = intent?.getStringExtra(EXTRA_PROXY_HOST) ?: ""
@@ -54,6 +59,7 @@ class AppVpnService : VpnService() {
 
         startFailed = false
         stopAlreadyReported = false
+        isShuttingDown = false
         activeProxyHost = host
         activeProxyPort = port
         startJob?.cancel()
@@ -81,8 +87,11 @@ class AppVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        isShuttingDown = true
         unregisterNetworkCallback()
         startJob?.cancel()
+        bridgeJob?.cancel()
+        stopBridge()
         serviceScope.cancel()
         vpnInterface?.close()
         vpnInterface = null
@@ -212,7 +221,62 @@ class AppVpnService : VpnService() {
         )
 
         vpnInterface = builder.establish()
-        return vpnInterface != null
+        val tunnelFd = vpnInterface?.fd ?: return false
+        return startBridge(tunnelFd, safeHost, port)
+    }
+
+    private fun startBridge(tunnelFd: Int, host: String, port: Int): Boolean {
+        val configFile = writeHevTunnelConfig(host, port) ?: return false
+
+        bridgeJob?.cancel()
+        bridgeJob = serviceScope.launch {
+            try {
+                VpnRuntimeState.appendLog("Starting tun2socks bridge.")
+                TProxyService.TProxyStartService(configFile.absolutePath, tunnelFd)
+                if (!isShuttingDown) {
+                    startFailed = true
+                    VpnRuntimeState.setError("tun2socks bridge stopped unexpectedly.")
+                    stopSelf()
+                }
+            } catch (e: Throwable) {
+                if (!isShuttingDown) {
+                    startFailed = true
+                    VpnRuntimeState.setError("tun2socks bridge failed (${e.javaClass.simpleName}).")
+                    stopSelf()
+                }
+            }
+        }
+        return true
+    }
+
+    private fun stopBridge() {
+        try {
+            TProxyService.TProxyStopService()
+            VpnRuntimeState.appendLog("tun2socks bridge stopped.")
+        } catch (_: Throwable) {
+            // Native bridge may already be stopped.
+        }
+    }
+
+    private fun writeHevTunnelConfig(host: String, port: Int): File? {
+        return try {
+            val configFile = File(filesDir, HEV_CONFIG_FILE)
+            val config = """
+                socks5:
+                  address: "$host"
+                  port: $port
+                  udp: "udp"
+                tcp:
+                  connect-timeout: 5000
+                  idle-timeout: 600
+                misc:
+                  task-stack-size: 24576
+            """.trimIndent()
+            configFile.writeText(config)
+            configFile
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private suspend fun waitForProxyWithRetry(host: String, port: Int): String? {
@@ -261,6 +325,7 @@ class AppVpnService : VpnService() {
     }
 
     companion object {
+        private const val HEV_CONFIG_FILE = "hev-socks5.yaml"
         private const val EXTRA_PROXY_HOST = "extra_proxy_host"
         private const val EXTRA_PROXY_PORT = "extra_proxy_port"
         private const val CHANNEL_ID = "pratice_vpn_channel"
