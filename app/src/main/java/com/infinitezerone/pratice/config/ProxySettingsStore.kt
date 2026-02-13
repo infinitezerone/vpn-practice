@@ -7,6 +7,11 @@ data class ProxyConfig(
     val port: Int
 )
 
+enum class RoutingMode {
+    Bypass,
+    Allowlist
+}
+
 class ProxySettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -42,10 +47,31 @@ class ProxySettingsStore(context: Context) {
             .apply()
     }
 
+    fun loadRoutingMode(): RoutingMode {
+        val raw = prefs.getString(KEY_ROUTING_MODE, RoutingMode.Bypass.name) ?: RoutingMode.Bypass.name
+        return RoutingMode.entries.firstOrNull { it.name == raw } ?: RoutingMode.Bypass
+    }
+
+    fun saveRoutingMode(mode: RoutingMode) {
+        prefs.edit()
+            .putString(KEY_ROUTING_MODE, mode.name)
+            .apply()
+    }
+
+    fun loadAutoReconnectEnabled(): Boolean = prefs.getBoolean(KEY_AUTO_RECONNECT, false)
+
+    fun saveAutoReconnectEnabled(enabled: Boolean) {
+        prefs.edit()
+            .putBoolean(KEY_AUTO_RECONNECT, enabled)
+            .apply()
+    }
+
     private companion object {
         const val PREFS_NAME = "proxy_settings"
         const val KEY_HOST = "proxy_host"
         const val KEY_PORT = "proxy_port"
         const val KEY_BYPASS_PACKAGES = "bypass_packages"
+        const val KEY_ROUTING_MODE = "routing_mode"
+        const val KEY_AUTO_RECONNECT = "auto_reconnect"
     }
 }

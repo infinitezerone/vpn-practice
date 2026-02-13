@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -13,15 +15,21 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.infinitezerone.pratice.R
 import com.infinitezerone.pratice.config.ProxySettingsStore
+import com.infinitezerone.pratice.config.RoutingMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class AppVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var activeProxyHost: String? = null
+    private var activeProxyPort: Int = -1
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startJob: Job? = null
     @Volatile
@@ -41,13 +49,16 @@ class AppVpnService : VpnService() {
 
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification(host, port))
+        registerNetworkCallback()
 
         startFailed = false
         stopAlreadyReported = false
+        activeProxyHost = host
+        activeProxyPort = port
         startJob?.cancel()
         startJob = serviceScope.launch {
             VpnRuntimeState.setConnecting(host, port)
-            val proxyError = ProxyConnectivityChecker.testConnection(host, port)
+            val proxyError = waitForProxyWithRetry(host, port)
             if (proxyError != null) {
                 startFailed = true
                 VpnRuntimeState.setError(proxyError)
@@ -69,15 +80,68 @@ class AppVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        unregisterNetworkCallback()
         startJob?.cancel()
         serviceScope.cancel()
         vpnInterface?.close()
         vpnInterface = null
+        activeProxyHost = null
+        activeProxyPort = -1
         stopForeground(STOP_FOREGROUND_REMOVE)
         if (!startFailed && !stopAlreadyReported) {
             VpnRuntimeState.setStopped("VPN stopped.")
         }
         super.onDestroy()
+    }
+
+    private fun registerNetworkCallback() {
+        if (networkCallback != null) {
+            return
+        }
+        connectivityManager = getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (vpnInterface == null) {
+                    return
+                }
+                val host = activeProxyHost ?: return
+                val port = activeProxyPort
+                if (port !in 1..65535) {
+                    return
+                }
+                serviceScope.launch {
+                    VpnRuntimeState.appendLog("Network available. Re-checking proxy connectivity.")
+                    VpnRuntimeState.setConnecting(host, port)
+                    val proxyError = waitForProxyWithRetry(host, port)
+                    if (proxyError == null) {
+                        VpnRuntimeState.setRunning(host, port)
+                    } else {
+                        VpnRuntimeState.setError(proxyError)
+                    }
+                }
+            }
+
+            override fun onLost(network: Network) {
+                VpnRuntimeState.appendLog("Network lost.")
+            }
+        }
+        try {
+            connectivityManager?.registerDefaultNetworkCallback(callback)
+            networkCallback = callback
+        } catch (_: Exception) {
+            VpnRuntimeState.appendLog("Network callback unavailable on this device.")
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        val callback = networkCallback ?: return
+        try {
+            connectivityManager?.unregisterNetworkCallback(callback)
+        } catch (_: Exception) {
+            // Callback already unregistered.
+        } finally {
+            networkCallback = null
+        }
     }
 
     override fun onRevoke() {
@@ -92,6 +156,7 @@ class AppVpnService : VpnService() {
             return true
         }
 
+        val settingsStore = ProxySettingsStore(this)
         val builder = Builder()
             .setSession("Pratice VPN")
             .setMtu(1500)
@@ -100,23 +165,68 @@ class AppVpnService : VpnService() {
             .addDnsServer("1.1.1.1")
             .addDnsServer("8.8.8.8")
 
-        val bypassPackages = ProxySettingsStore(this).loadBypassPackages()
-        bypassPackages.forEach { packageName ->
+        try {
+            // IPv6 is optional; some devices or networks may not support it.
+            builder.addAddress("fd00:1:fd00:1:fd00:1:fd00:1", 128)
+            builder.addRoute("::", 0)
+        } catch (_: Exception) {
+            VpnRuntimeState.appendLog("IPv6 route unavailable. Continuing with IPv4 only.")
+        }
+
+        val selectedPackages = settingsStore.loadBypassPackages()
+        val routingMode = settingsStore.loadRoutingMode()
+
+        selectedPackages.forEach { packageName ->
             try {
-                builder.addDisallowedApplication(packageName)
+                if (routingMode == RoutingMode.Allowlist) {
+                    builder.addAllowedApplication(packageName)
+                } else {
+                    builder.addDisallowedApplication(packageName)
+                }
             } catch (_: PackageManager.NameNotFoundException) {
                 // Ignore packages that no longer exist.
             }
         }
 
+        VpnRuntimeState.appendLog(
+            if (routingMode == RoutingMode.Allowlist) {
+                "VPN routing mode: allowlist (${selectedPackages.size} apps)"
+            } else {
+                "VPN routing mode: bypass (${selectedPackages.size} apps)"
+            }
+        )
+
         vpnInterface = builder.establish()
         return vpnInterface != null
+    }
+
+    private suspend fun waitForProxyWithRetry(host: String, port: Int): String? {
+        val maxAttempts = 3
+        var backoffMs = 1_000L
+        var lastError: String? = null
+
+        for (attempt in 1..maxAttempts) {
+            VpnRuntimeState.appendLog("Proxy connectivity check $attempt/$maxAttempts")
+            val error = ProxyConnectivityChecker.testConnection(host, port)
+            if (error == null) {
+                return null
+            }
+            lastError = error
+
+            if (attempt < maxAttempts) {
+                VpnRuntimeState.appendLog("Proxy unreachable, retrying in ${backoffMs / 1000}s")
+                delay(backoffMs)
+                backoffMs *= 2
+            }
+        }
+
+        return lastError
     }
 
     private fun buildNotification(host: String, port: Int): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Pratice VPN running")
-            .setContentText("Proxy $host:$port")
+            .setContentText("Proxy ${EndpointSanitizer.sanitizeHost(host)}:$port")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
@@ -145,7 +255,11 @@ class AppVpnService : VpnService() {
             val intent = Intent(context, AppVpnService::class.java)
                 .putExtra(EXTRA_PROXY_HOST, host)
                 .putExtra(EXTRA_PROXY_PORT, port)
-            ContextCompat.startForegroundService(context, intent)
+            try {
+                ContextCompat.startForegroundService(context, intent)
+            } catch (e: Exception) {
+                VpnRuntimeState.setError("Failed to start VPN service (${e.javaClass.simpleName}).")
+            }
         }
 
         fun stop(context: Context) {

@@ -31,6 +31,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -43,11 +44,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.infinitezerone.pratice.config.ProxyConfigValidator
 import com.infinitezerone.pratice.config.ProxySettingsStore
+import com.infinitezerone.pratice.config.RoutingMode
 import com.infinitezerone.pratice.vpn.AppVpnService
+import com.infinitezerone.pratice.vpn.EndpointSanitizer
 import com.infinitezerone.pratice.vpn.ProxyConnectivityChecker
 import com.infinitezerone.pratice.vpn.RuntimeStatus
 import com.infinitezerone.pratice.vpn.VpnRuntimeState
@@ -72,6 +76,10 @@ private data class InstalledApp(
     val appLabel: String
 )
 
+private const val TAG_PROXY_HOST_INPUT = "proxy_host_input"
+private const val TAG_PROXY_PORT_INPUT = "proxy_port_input"
+private const val TAG_START_BUTTON = "start_button"
+
 @Composable
 private fun VpnHome() {
     val context = LocalContext.current
@@ -81,6 +89,8 @@ private fun VpnHome() {
     var hostInput by rememberSaveable { mutableStateOf(settingsStore.loadHost()) }
     var portInput by rememberSaveable { mutableStateOf(settingsStore.loadPortText()) }
     var bypassPackages by remember { mutableStateOf(settingsStore.loadBypassPackages()) }
+    var routingMode by remember { mutableStateOf(settingsStore.loadRoutingMode()) }
+    var autoReconnect by remember { mutableStateOf(settingsStore.loadAutoReconnectEnabled()) }
     var showBypassDialog by remember { mutableStateOf(false) }
     var infoMessage by remember { mutableStateOf<String?>(null) }
     var isTestingConnection by remember { mutableStateOf(false) }
@@ -126,7 +136,9 @@ private fun VpnHome() {
             onValueChange = { hostInput = it },
             label = { Text("Proxy Host") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(TAG_PROXY_HOST_INPUT)
         )
         Spacer(modifier = Modifier.height(12.dp))
         OutlinedTextField(
@@ -135,7 +147,9 @@ private fun VpnHome() {
             label = { Text("Proxy Port") },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(TAG_PROXY_PORT_INPUT)
         )
         validationError?.let {
             Spacer(modifier = Modifier.height(8.dp))
@@ -147,16 +161,79 @@ private fun VpnHome() {
         }
         Spacer(modifier = Modifier.height(12.dp))
         Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    autoReconnect = !autoReconnect
+                    settingsStore.saveAutoReconnectEnabled(autoReconnect)
+                    infoMessage = if (autoReconnect) {
+                        "Auto-reconnect on boot enabled."
+                    } else {
+                        "Auto-reconnect on boot disabled."
+                    }
+                },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = autoReconnect,
+                onCheckedChange = { checked ->
+                    autoReconnect = checked
+                    settingsStore.saveAutoReconnectEnabled(checked)
+                    infoMessage = if (checked) {
+                        "Auto-reconnect on boot enabled."
+                    } else {
+                        "Auto-reconnect on boot disabled."
+                    }
+                }
+            )
+            Text("Auto-reconnect on boot")
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = "Routing mode",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = {
+                    routingMode = RoutingMode.Bypass
+                    settingsStore.saveRoutingMode(routingMode)
+                    infoMessage = "Routing mode set to bypass."
+                }
+            ) {
+                Text(if (routingMode == RoutingMode.Bypass) "Bypass (active)" else "Bypass")
+            }
+            OutlinedButton(
+                onClick = {
+                    routingMode = RoutingMode.Allowlist
+                    settingsStore.saveRoutingMode(routingMode)
+                    infoMessage = "Routing mode set to allowlist."
+                }
+            ) {
+                Text(if (routingMode == RoutingMode.Allowlist) "Allowlist (active)" else "Allowlist")
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Bypass apps: ${bypassPackages.size}",
+                text = if (routingMode == RoutingMode.Bypass) {
+                    "Bypass apps: ${bypassPackages.size}"
+                } else {
+                    "Allowlist apps: ${bypassPackages.size}"
+                },
                 style = MaterialTheme.typography.bodyMedium
             )
             Button(onClick = { showBypassDialog = true }) {
-                Text("Select Bypass Apps")
+                Text(if (routingMode == RoutingMode.Bypass) "Select Bypass Apps" else "Select Allowlist Apps")
             }
         }
         Spacer(modifier = Modifier.height(12.dp))
@@ -188,6 +265,8 @@ private fun VpnHome() {
                     val host = hostInput.trim()
                     val port = portInput.trim().toIntOrNull() ?: return@Button
                     settingsStore.save(host, port)
+                    settingsStore.saveRoutingMode(routingMode)
+                    settingsStore.saveAutoReconnectEnabled(autoReconnect)
                     infoMessage = "Proxy settings saved."
                 },
                 enabled = configIsValid
@@ -199,6 +278,8 @@ private fun VpnHome() {
                     val host = hostInput.trim()
                     val port = portInput.trim().toIntOrNull() ?: return@Button
                     settingsStore.save(host, port)
+                    settingsStore.saveRoutingMode(routingMode)
+                    settingsStore.saveAutoReconnectEnabled(autoReconnect)
                     uiScope.launch {
                         isTestingConnection = true
                         val error = withContext(Dispatchers.IO) {
@@ -206,7 +287,9 @@ private fun VpnHome() {
                         }
                         if (error == null) {
                             infoMessage = "Proxy test succeeded."
-                            VpnRuntimeState.appendLog("Proxy test succeeded for $host:$port")
+                            VpnRuntimeState.appendLog(
+                                "Proxy test succeeded for ${EndpointSanitizer.sanitizeHost(host)}:$port"
+                            )
                         } else {
                             VpnRuntimeState.setError(error)
                         }
@@ -244,6 +327,8 @@ private fun VpnHome() {
                         }
 
                         settingsStore.save(host, port)
+                        settingsStore.saveRoutingMode(routingMode)
+                        settingsStore.saveAutoReconnectEnabled(autoReconnect)
                         infoMessage = null
                         val intent: Intent? = VpnService.prepare(context)
                         if (intent != null) {
@@ -252,7 +337,8 @@ private fun VpnHome() {
                             AppVpnService.start(context, host, port)
                         }
                     },
-                    enabled = configIsValid && runtimeSnapshot.status != RuntimeStatus.Connecting
+                    enabled = configIsValid && runtimeSnapshot.status != RuntimeStatus.Connecting,
+                    modifier = Modifier.testTag(TAG_START_BUTTON)
                 ) {
                     Text("Start")
                 }
@@ -281,12 +367,17 @@ private fun VpnHome() {
         BypassAppsDialog(
             installedApps = installedApps,
             initialSelection = bypassPackages,
+            routingMode = routingMode,
             onDismiss = { showBypassDialog = false },
             onApply = { selectedPackages ->
                 bypassPackages = selectedPackages
                 settingsStore.saveBypassPackages(selectedPackages)
-                infoMessage = "Bypass app list saved."
-                VpnRuntimeState.appendLog("Bypass list updated (${selectedPackages.size} apps)")
+                infoMessage = if (routingMode == RoutingMode.Bypass) {
+                    "Bypass app list saved."
+                } else {
+                    "Allowlist app list saved."
+                }
+                VpnRuntimeState.appendLog("App routing list updated (${selectedPackages.size} apps)")
                 showBypassDialog = false
             }
         )
@@ -297,6 +388,7 @@ private fun VpnHome() {
 private fun BypassAppsDialog(
     installedApps: List<InstalledApp>,
     initialSelection: Set<String>,
+    routingMode: RoutingMode,
     onDismiss: () -> Unit,
     onApply: (Set<String>) -> Unit
 ) {
@@ -316,7 +408,15 @@ private fun BypassAppsDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select bypass apps") },
+        title = {
+            Text(
+                if (routingMode == RoutingMode.Bypass) {
+                    "Select bypass apps"
+                } else {
+                    "Select allowlist apps"
+                }
+            )
+        },
         text = {
             Column {
                 OutlinedTextField(

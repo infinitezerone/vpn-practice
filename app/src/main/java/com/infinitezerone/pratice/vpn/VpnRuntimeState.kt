@@ -27,12 +27,12 @@ object VpnRuntimeState {
     val state: StateFlow<RuntimeSnapshot> = _state
 
     fun setConnecting(host: String, port: Int) {
-        appendLog("Connecting to proxy $host:$port")
+        appendLog("Connecting to proxy ${EndpointSanitizer.sanitizeHost(host)}:$port")
         _state.update { it.copy(status = RuntimeStatus.Connecting, lastError = null) }
     }
 
     fun setRunning(host: String, port: Int) {
-        appendLog("VPN running via proxy $host:$port")
+        appendLog("VPN running via proxy ${EndpointSanitizer.sanitizeHost(host)}:$port")
         _state.update { it.copy(status = RuntimeStatus.Running, lastError = null) }
     }
 

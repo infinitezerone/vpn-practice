@@ -141,7 +141,7 @@
       "Select apps to include",
       "Verify only those apps use VPN"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F015",
@@ -174,7 +174,7 @@
       "Start VPN",
       "Verify retries happen without app crash"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F018",
@@ -205,7 +205,7 @@
       "Background app",
       "Verify VPN remains connected"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F021",
@@ -216,7 +216,7 @@
       "Reboot device",
       "Verify VPN restarts"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F022",
@@ -269,7 +269,7 @@
       "Set proxy credentials (if supported)",
       "Verify logs do not contain secrets"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F027",
@@ -279,7 +279,7 @@
       "Run on device without IPv6",
       "Start VPN and verify it still works"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F028",
@@ -309,7 +309,7 @@
       "Toggle Wi-Fi/cellular",
       "Verify reconnect or status update"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F031",
