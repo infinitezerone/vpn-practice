@@ -1,0 +1,8 @@
+# Claude Progress Log
+Rules:
+- Only change "passes" fields in feature_list.json when marking features done.
+- Append a dated summary line for each work session.
+
+- 2026-02-13: Initialized long-running agent harness (init.sh, feature_list.json, claude-progress.txt). No app features implemented yet.
+- 2026-02-13: Implemented initial Compose UI (Start/Stop) and VPN permission flow; added VpnService stub and manifest entry. Marked F001-F003 as passing.
+- 2026-02-13: Added proxy host/port form with validation and persistence (SharedPreferences), wired Start button enablement to valid config, passed unit tests and debug build. Marked F004/F005/F006/F024/F031 as passing.

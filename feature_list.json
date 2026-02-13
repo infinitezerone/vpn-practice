@@ -1,0 +1,334 @@
+[
+  {
+    "id": "F001",
+    "category": "app-shell",
+    "description": "App launches to a main screen with Start/Stop control.",
+    "steps": [
+      "Install and launch the app",
+      "Verify main screen renders without crash"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F002",
+    "category": "permissions",
+    "description": "VPN permission flow is wired via VpnService.prepare.",
+    "steps": [
+      "Tap Start when permission not granted",
+      "System VPN permission dialog appears",
+      "Granting permission returns to app and proceeds"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F003",
+    "category": "permissions",
+    "description": "If VPN permission is denied, app shows a clear error state.",
+    "steps": [
+      "Tap Start and deny VPN permission",
+      "Verify user-facing message and Start remains disabled or retriable"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F004",
+    "category": "configuration",
+    "description": "Proxy host and port can be entered and saved.",
+    "steps": [
+      "Enter proxy host and port",
+      "Restart app and verify values persist"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F005",
+    "category": "configuration",
+    "description": "Proxy host/port validation blocks invalid input.",
+    "steps": [
+      "Enter empty host or non-numeric port",
+      "Verify validation error and Start is disabled"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F006",
+    "category": "configuration",
+    "description": "Proxy settings are stored in DataStore or SharedPreferences.",
+    "steps": [
+      "Set values and confirm persistence across process kill"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F007",
+    "category": "configuration",
+    "description": "Bypass apps can be selected from an installed-app list.",
+    "steps": [
+      "Open bypass picker",
+      "Select at least one app",
+      "Verify selection is saved"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F008",
+    "category": "configuration",
+    "description": "Bypass app selection persists across restarts.",
+    "steps": [
+      "Select apps to bypass",
+      "Restart app",
+      "Verify selection remains"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F009",
+    "category": "vpn-core",
+    "description": "VPN service starts as a foreground service with notification.",
+    "steps": [
+      "Tap Start",
+      "Verify foreground notification is shown"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F010",
+    "category": "vpn-core",
+    "description": "VPN service cleanly stops and tears down the TUN interface.",
+    "steps": [
+      "Tap Stop",
+      "Verify notification is removed and VPN disconnects"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F011",
+    "category": "vpn-core",
+    "description": "VPN builder configures a TUN interface with IPv4 address and route.",
+    "steps": [
+      "Start VPN",
+      "Verify TUN interface has address and default route"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F012",
+    "category": "vpn-core",
+    "description": "DNS servers are set for the VPN session.",
+    "steps": [
+      "Start VPN",
+      "Verify DNS servers are configured in the session"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F013",
+    "category": "vpn-core",
+    "description": "VPN service respects bypass apps via addDisallowedApplication.",
+    "steps": [
+      "Select an app to bypass",
+      "Start VPN",
+      "Verify app traffic does not go through VPN"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F014",
+    "category": "vpn-core",
+    "description": "VPN service can alternatively use allowlist via addAllowedApplication.",
+    "steps": [
+      "Enable allowlist mode",
+      "Select apps to include",
+      "Verify only those apps use VPN"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F015",
+    "category": "proxy-bridge",
+    "description": "TUN traffic is forwarded to the configured proxy.",
+    "steps": [
+      "Set a reachable proxy",
+      "Start VPN",
+      "Verify traffic is forwarded through proxy"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F016",
+    "category": "proxy-bridge",
+    "description": "Connection errors to proxy surface a clear status in UI.",
+    "steps": [
+      "Set invalid proxy",
+      "Start VPN",
+      "Verify error status shown"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F017",
+    "category": "proxy-bridge",
+    "description": "Proxy connection is retried with backoff.",
+    "steps": [
+      "Disconnect proxy",
+      "Start VPN",
+      "Verify retries happen without app crash"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F018",
+    "category": "status",
+    "description": "UI shows current VPN state: stopped, connecting, running, error.",
+    "steps": [
+      "Start VPN and observe states",
+      "Simulate error and verify error state"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F019",
+    "category": "status",
+    "description": "Last error details are displayed in a readable form.",
+    "steps": [
+      "Trigger a proxy error",
+      "Verify error message is visible"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F020",
+    "category": "service",
+    "description": "VPN service survives app backgrounding.",
+    "steps": [
+      "Start VPN",
+      "Background app",
+      "Verify VPN remains connected"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F021",
+    "category": "service",
+    "description": "Boot receiver optionally restores last VPN state.",
+    "steps": [
+      "Enable auto-reconnect",
+      "Reboot device",
+      "Verify VPN restarts"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F022",
+    "category": "ui",
+    "description": "Bypass list supports search and multi-select.",
+    "steps": [
+      "Open bypass picker",
+      "Search for an app",
+      "Select multiple apps"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F023",
+    "category": "ui",
+    "description": "Proxy settings screen includes test connection button.",
+    "steps": [
+      "Tap test connection",
+      "Verify success/failure feedback"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F024",
+    "category": "ui",
+    "description": "Start button is disabled until valid settings are present.",
+    "steps": [
+      "Clear host/port",
+      "Verify Start disabled",
+      "Enter valid settings and verify Start enabled"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F025",
+    "category": "logging",
+    "description": "Connection logs are available for debugging.",
+    "steps": [
+      "Start VPN",
+      "Open logs view",
+      "Verify recent events are shown"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F026",
+    "category": "security",
+    "description": "Sensitive settings are not logged.",
+    "steps": [
+      "Set proxy credentials (if supported)",
+      "Verify logs do not contain secrets"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F027",
+    "category": "compat",
+    "description": "VPN handles IPv6-disabled devices gracefully.",
+    "steps": [
+      "Run on device without IPv6",
+      "Start VPN and verify it still works"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F028",
+    "category": "compat",
+    "description": "App handles Android 10+ background restrictions (foreground service).",
+    "steps": [
+      "Start VPN",
+      "Verify no background execution violation"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F029",
+    "category": "recovery",
+    "description": "If the VPN is revoked by system, app returns to stopped state.",
+    "steps": [
+      "Revoke VPN from system settings",
+      "Verify app updates state to stopped"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F030",
+    "category": "recovery",
+    "description": "If network changes, VPN reconnects or shows status.",
+    "steps": [
+      "Toggle Wi-Fi/cellular",
+      "Verify reconnect or status update"
+    ],
+    "passes": false
+  },
+  {
+    "id": "F031",
+    "category": "testing",
+    "description": "Basic unit tests cover settings validation.",
+    "steps": [
+      "Run unit tests",
+      "Verify validation tests pass"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F032",
+    "category": "testing",
+    "description": "Instrumentation test validates Start/Stop UI flow.",
+    "steps": [
+      "Run UI test",
+      "Verify VPN permission flow handling"
+    ],
+    "passes": false
+  }
+]
