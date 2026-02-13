@@ -12,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,18 +22,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -43,6 +48,12 @@ import androidx.compose.ui.unit.dp
 import com.infinitezerone.pratice.config.ProxyConfigValidator
 import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.vpn.AppVpnService
+import com.infinitezerone.pratice.vpn.ProxyConnectivityChecker
+import com.infinitezerone.pratice.vpn.RuntimeStatus
+import com.infinitezerone.pratice.vpn.VpnRuntimeState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
@@ -56,12 +67,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class VpnStatus {
-    Stopped,
-    Running,
-    Error
-}
-
 private data class InstalledApp(
     val packageName: String,
     val appLabel: String
@@ -73,12 +78,15 @@ private fun VpnHome() {
     val settingsStore = remember(context) { ProxySettingsStore(context) }
     val installedApps = remember(context) { loadInstalledApps(context) }
 
-    var status by remember { mutableStateOf(VpnStatus.Stopped) }
-    var message by remember { mutableStateOf<String?>(null) }
     var hostInput by rememberSaveable { mutableStateOf(settingsStore.loadHost()) }
     var portInput by rememberSaveable { mutableStateOf(settingsStore.loadPortText()) }
     var bypassPackages by remember { mutableStateOf(settingsStore.loadBypassPackages()) }
     var showBypassDialog by remember { mutableStateOf(false) }
+    var infoMessage by remember { mutableStateOf<String?>(null) }
+    var isTestingConnection by remember { mutableStateOf(false) }
+    val runtimeSnapshot by VpnRuntimeState.state.collectAsState()
+    val uiScope = rememberCoroutineScope()
+
     val validationError = ProxyConfigValidator.validate(hostInput.trim(), portInput.trim())
     val configIsValid = validationError == null
 
@@ -89,18 +97,15 @@ private fun VpnHome() {
             val host = hostInput.trim()
             val port = portInput.trim().toIntOrNull()
             if (port == null) {
-                status = VpnStatus.Error
-                message = "Failed to start VPN: invalid proxy settings."
+                VpnRuntimeState.setError("Failed to start VPN: invalid proxy settings.")
                 return@rememberLauncherForActivityResult
             }
 
             settingsStore.save(host, port)
             AppVpnService.start(context, host, port)
-            status = VpnStatus.Running
-            message = null
+            infoMessage = null
         } else {
-            status = VpnStatus.Error
-            message = "VPN permission denied."
+            VpnRuntimeState.setError("VPN permission denied.")
         }
     }
 
@@ -156,10 +161,10 @@ private fun VpnHome() {
         }
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "Status: ${status.name}",
+            text = "Status: ${runtimeSnapshot.status.name}",
             style = MaterialTheme.typography.bodyLarge
         )
-        message?.let {
+        runtimeSnapshot.lastError?.let {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = it,
@@ -167,24 +172,64 @@ private fun VpnHome() {
                 style = MaterialTheme.typography.bodyMedium
             )
         }
+        infoMessage?.let {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(text = it, style = MaterialTheme.typography.bodyMedium)
+        }
         Spacer(modifier = Modifier.height(24.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Button(
                 onClick = {
                     val host = hostInput.trim()
                     val port = portInput.trim().toIntOrNull() ?: return@Button
                     settingsStore.save(host, port)
-                    message = "Proxy settings saved."
+                    infoMessage = "Proxy settings saved."
                 },
                 enabled = configIsValid
             ) {
                 Text("Save")
             }
-            if (status == VpnStatus.Running) {
+            Button(
+                onClick = {
+                    val host = hostInput.trim()
+                    val port = portInput.trim().toIntOrNull() ?: return@Button
+                    settingsStore.save(host, port)
+                    uiScope.launch {
+                        isTestingConnection = true
+                        val error = withContext(Dispatchers.IO) {
+                            ProxyConnectivityChecker.testConnection(host, port)
+                        }
+                        if (error == null) {
+                            infoMessage = "Proxy test succeeded."
+                            VpnRuntimeState.appendLog("Proxy test succeeded for $host:$port")
+                        } else {
+                            VpnRuntimeState.setError(error)
+                        }
+                        isTestingConnection = false
+                    }
+                },
+                enabled = configIsValid && !isTestingConnection
+            ) {
+                if (isTestingConnection) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.height(20.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text("Test Connection")
+                }
+            }
+            if (runtimeSnapshot.status == RuntimeStatus.Running ||
+                runtimeSnapshot.status == RuntimeStatus.Connecting
+            ) {
                 Button(onClick = {
                     AppVpnService.stop(context)
-                    status = VpnStatus.Stopped
-                    message = null
+                    infoMessage = null
                 }) {
                     Text("Stop")
                 }
@@ -194,25 +239,40 @@ private fun VpnHome() {
                         val host = hostInput.trim()
                         val port = portInput.trim().toIntOrNull()
                         if (port == null) {
-                            status = VpnStatus.Error
-                            message = "Failed to start VPN: invalid proxy settings."
+                            VpnRuntimeState.setError("Failed to start VPN: invalid proxy settings.")
                             return@Button
                         }
 
                         settingsStore.save(host, port)
+                        infoMessage = null
                         val intent: Intent? = VpnService.prepare(context)
                         if (intent != null) {
                             permissionLauncher.launch(intent)
                         } else {
                             AppVpnService.start(context, host, port)
-                            status = VpnStatus.Running
-                            message = null
                         }
                     },
-                    enabled = configIsValid
+                    enabled = configIsValid && runtimeSnapshot.status != RuntimeStatus.Connecting
                 ) {
                     Text("Start")
                 }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = "Recent logs",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+        ) {
+            itemsIndexed(runtimeSnapshot.logs) { _, line ->
+                Text(text = line, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -225,7 +285,8 @@ private fun VpnHome() {
             onApply = { selectedPackages ->
                 bypassPackages = selectedPackages
                 settingsStore.saveBypassPackages(selectedPackages)
-                message = "Bypass app list saved."
+                infoMessage = "Bypass app list saved."
+                VpnRuntimeState.appendLog("Bypass list updated (${selectedPackages.size} apps)")
                 showBypassDialog = false
             }
         )
@@ -240,42 +301,64 @@ private fun BypassAppsDialog(
     onApply: (Set<String>) -> Unit
 ) {
     var selectedPackages by remember(initialSelection) { mutableStateOf(initialSelection.toMutableSet()) }
+    var query by rememberSaveable { mutableStateOf("") }
+    val filteredApps = remember(installedApps, query) {
+        val normalizedQuery = query.trim().lowercase(Locale.US)
+        if (normalizedQuery.isBlank()) {
+            installedApps
+        } else {
+            installedApps.filter { app ->
+                app.appLabel.lowercase(Locale.US).contains(normalizedQuery) ||
+                    app.packageName.lowercase(Locale.US).contains(normalizedQuery)
+            }
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Select bypass apps") },
         text = {
-            LazyColumn(modifier = Modifier.height(320.dp)) {
-                items(installedApps, key = { it.packageName }) { app ->
-                    val checked = selectedPackages.contains(app.packageName)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                selectedPackages = selectedPackages.toMutableSet().also { set ->
-                                    if (set.contains(app.packageName)) {
-                                        set.remove(app.packageName)
-                                    } else {
-                                        set.add(app.packageName)
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Search apps") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyColumn(modifier = Modifier.height(280.dp)) {
+                    itemsIndexed(filteredApps, key = { _, app -> app.packageName }) { _, app ->
+                        val checked = selectedPackages.contains(app.packageName)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    selectedPackages = selectedPackages.toMutableSet().also { set ->
+                                        if (set.contains(app.packageName)) {
+                                            set.remove(app.packageName)
+                                        } else {
+                                            set.add(app.packageName)
+                                        }
                                     }
                                 }
-                            }
-                            .padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = checked,
-                            onCheckedChange = { isChecked ->
-                                selectedPackages = selectedPackages.toMutableSet().also { set ->
-                                    if (isChecked) {
-                                        set.add(app.packageName)
-                                    } else {
-                                        set.remove(app.packageName)
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { isChecked ->
+                                    selectedPackages = selectedPackages.toMutableSet().also { set ->
+                                        if (isChecked) {
+                                            set.add(app.packageName)
+                                        } else {
+                                            set.remove(app.packageName)
+                                        }
                                     }
                                 }
-                            }
-                        )
-                        Text(text = "${app.appLabel} (${app.packageName})")
+                            )
+                            Text(text = "${app.appLabel} (${app.packageName})")
+                        }
                     }
                 }
             }

@@ -163,7 +163,7 @@
       "Start VPN",
       "Verify error status shown"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F017",
@@ -184,7 +184,7 @@
       "Start VPN and observe states",
       "Simulate error and verify error state"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F019",
@@ -194,7 +194,7 @@
       "Trigger a proxy error",
       "Verify error message is visible"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F020",
@@ -227,7 +227,7 @@
       "Search for an app",
       "Select multiple apps"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F023",
@@ -237,7 +237,7 @@
       "Tap test connection",
       "Verify success/failure feedback"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F024",
@@ -259,7 +259,7 @@
       "Open logs view",
       "Verify recent events are shown"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F026",
@@ -299,7 +299,7 @@
       "Revoke VPN from system settings",
       "Verify app updates state to stopped"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "F030",

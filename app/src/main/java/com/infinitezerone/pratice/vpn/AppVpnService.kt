@@ -13,14 +13,28 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.infinitezerone.pratice.R
 import com.infinitezerone.pratice.config.ProxySettingsStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 class AppVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var startJob: Job? = null
+    @Volatile
+    private var startFailed = false
+    @Volatile
+    private var stopAlreadyReported = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val host = intent?.getStringExtra(EXTRA_PROXY_HOST) ?: ""
         val port = intent?.getIntExtra(EXTRA_PROXY_PORT, -1) ?: -1
         if (host.isBlank() || port !in 1..65535) {
+            startFailed = true
+            VpnRuntimeState.setError("Failed to start VPN: invalid proxy settings.")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -28,23 +42,47 @@ class AppVpnService : VpnService() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification(host, port))
 
-        if (!startVpnTunnel()) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return START_NOT_STICKY
+        startFailed = false
+        stopAlreadyReported = false
+        startJob?.cancel()
+        startJob = serviceScope.launch {
+            VpnRuntimeState.setConnecting(host, port)
+            val proxyError = ProxyConnectivityChecker.testConnection(host, port)
+            if (proxyError != null) {
+                startFailed = true
+                VpnRuntimeState.setError(proxyError)
+                stopSelf()
+                return@launch
+            }
+
+            if (!startVpnTunnel()) {
+                startFailed = true
+                VpnRuntimeState.setError("Failed to establish VPN tunnel.")
+                stopSelf()
+                return@launch
+            }
+
+            VpnRuntimeState.setRunning(host, port)
         }
 
         return START_STICKY
     }
 
     override fun onDestroy() {
+        startJob?.cancel()
+        serviceScope.cancel()
         vpnInterface?.close()
         vpnInterface = null
         stopForeground(STOP_FOREGROUND_REMOVE)
+        if (!startFailed && !stopAlreadyReported) {
+            VpnRuntimeState.setStopped("VPN stopped.")
+        }
         super.onDestroy()
     }
 
     override fun onRevoke() {
+        stopAlreadyReported = true
+        VpnRuntimeState.setStopped("VPN permission revoked by system.")
         stopSelf()
         super.onRevoke()
     }

@@ -7,3 +7,4 @@ Rules:
 - 2026-02-13: Implemented initial Compose UI (Start/Stop) and VPN permission flow; added VpnService stub and manifest entry. Marked F001-F003 as passing.
 - 2026-02-13: Added proxy host/port form with validation and persistence (SharedPreferences), wired Start button enablement to valid config, passed unit tests and debug build. Marked F004/F005/F006/F024/F031 as passing.
 - 2026-02-13: Added bypass app selector with persistence, upgraded VPN service to foreground mode with notification and TUN builder (IPv4/default route/DNS), applied addDisallowedApplication, and passed unit tests + debug build. Marked F007/F008/F009/F010/F011/F012/F013/F028 as passing.
+- 2026-02-13: Added runtime VPN state + logs, proxy connection test button, bypass app search, and service error reporting for proxy failures/revoke. Passed unit tests + debug build. Marked F016/F018/F019/F022/F023/F025/F029 as passing.
