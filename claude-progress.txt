@@ -11,3 +11,4 @@ Rules:
 - 2026-02-13: Added routing mode toggle (bypass/allowlist) and service-side proxy retry with backoff before fail. Passed unit tests + debug build. Marked F014/F017 as passing.
 - 2026-02-13: Added auto-reconnect at boot toggle + receiver, network-change status handling, and endpoint sanitization in logs/notifications. Passed unit tests + debug build. Marked F020/F021/F026/F030 as passing.
 - 2026-02-13: Added IPv6 optional routing fallback and a Compose instrumentation UI test skeleton for Start button validation. Debug + unit + androidTest APK assembly passed. `connectedDebugAndroidTest` blocked (no connected device), so F032 remains pending.
+- 2026-02-13: Emulator connected and `connectedDebugAndroidTest` passed (2 tests). Added HTTP proxy bridge hint in VPN builder (`setHttpProxy`), plus host normalization in connectivity checks. Marked F032 as passing. F015 remains pending for full TUN packet forwarding implementation.

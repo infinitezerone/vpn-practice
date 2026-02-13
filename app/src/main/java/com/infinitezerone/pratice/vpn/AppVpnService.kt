@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -157,6 +158,13 @@ class AppVpnService : VpnService() {
         }
 
         val settingsStore = ProxySettingsStore(this)
+        val host = activeProxyHost
+        val port = activeProxyPort
+        if (host.isNullOrBlank() || port !in 1..65535) {
+            return false
+        }
+
+        val safeHost = EndpointSanitizer.sanitizeHost(host)
         val builder = Builder()
             .setSession("Pratice VPN")
             .setMtu(1500)
@@ -171,6 +179,13 @@ class AppVpnService : VpnService() {
             builder.addRoute("::", 0)
         } catch (_: Exception) {
             VpnRuntimeState.appendLog("IPv6 route unavailable. Continuing with IPv4 only.")
+        }
+
+        try {
+            builder.setHttpProxy(ProxyInfo.buildDirectProxy(safeHost, port))
+            VpnRuntimeState.appendLog("HTTP proxy bridge enabled for $safeHost:$port")
+        } catch (_: Exception) {
+            VpnRuntimeState.appendLog("HTTP proxy bridge unavailable. Continuing without HTTP proxy.")
         }
 
         val selectedPackages = settingsStore.loadBypassPackages()

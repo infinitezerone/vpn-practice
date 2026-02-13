@@ -8,7 +8,7 @@ object ProxyConnectivityChecker {
         val safeHost = EndpointSanitizer.sanitizeHost(host)
         return try {
             Socket().use { socket ->
-                socket.connect(InetSocketAddress(host, port), timeoutMs)
+                socket.connect(InetSocketAddress(safeHost, port), timeoutMs)
             }
             null
         } catch (e: Exception) {

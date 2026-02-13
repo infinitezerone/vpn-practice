@@ -329,6 +329,6 @@
       "Run UI test",
       "Verify VPN permission flow handling"
     ],
-    "passes": false
+    "passes": true
   }
 ]
