@@ -33,9 +33,19 @@ class ProxySettingsStore(context: Context) {
             .apply()
     }
 
+    fun loadBypassPackages(): Set<String> =
+        prefs.getStringSet(KEY_BYPASS_PACKAGES, emptySet())?.toSet() ?: emptySet()
+
+    fun saveBypassPackages(packages: Set<String>) {
+        prefs.edit()
+            .putStringSet(KEY_BYPASS_PACKAGES, packages.toSet())
+            .apply()
+    }
+
     private companion object {
         const val PREFS_NAME = "proxy_settings"
         const val KEY_HOST = "proxy_host"
         const val KEY_PORT = "proxy_port"
+        const val KEY_BYPASS_PACKAGES = "bypass_packages"
     }
 }
