@@ -97,7 +97,7 @@ class AppVpnService : VpnService() {
         startJob = serviceScope.launch {
             VpnRuntimeState.appendLog("Proxy protocol: ${protocol.name}")
             VpnRuntimeState.setConnecting(host, port)
-            val proxyError = waitForProxyWithRetry(host, port)
+            val proxyError = waitForProxyWithRetry(host, port, protocol)
             if (stopRequested || isShuttingDown) {
                 return@launch
             }
@@ -187,7 +187,7 @@ class AppVpnService : VpnService() {
                     if (!wasRunning) {
                         VpnRuntimeState.setConnecting(host, port)
                     }
-                    val proxyError = waitForProxyWithRetry(host, port)
+                    val proxyError = waitForProxyWithRetry(host, port, activeProxyProtocol)
                     if (stopRequested || isShuttingDown) {
                         return@launch
                     }
@@ -463,7 +463,11 @@ class AppVpnService : VpnService() {
         }
     }
 
-    private suspend fun waitForProxyWithRetry(host: String, port: Int): String? {
+    private suspend fun waitForProxyWithRetry(
+        host: String,
+        port: Int,
+        protocol: ProxyProtocol
+    ): String? {
         val maxAttempts = 3
         var backoffMs = 1_000L
         var lastError: String? = null
@@ -489,6 +493,7 @@ class AppVpnService : VpnService() {
             val error = ProxyConnectivityChecker.testConnection(
                 host = host,
                 port = port,
+                protocol = protocol,
                 protectSocket = protector,
                 connectAddress = connectAddress
             )

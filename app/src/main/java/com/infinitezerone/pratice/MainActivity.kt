@@ -335,7 +335,11 @@ private fun VpnHome() {
                     uiScope.launch {
                         isTestingConnection = true
                         val error = withContext(Dispatchers.IO) {
-                            ProxyConnectivityChecker.testConnection(host, port)
+                            ProxyConnectivityChecker.testConnection(
+                                host = host,
+                                port = port,
+                                protocol = proxyProtocol
+                            )
                         }
                         if (error == null) {
                             infoMessage = "Proxy test succeeded."
