@@ -16,7 +16,6 @@ import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.infinitezerone.pratice.R
-import com.infinitezerone.pratice.config.HttpTrafficMode
 import com.infinitezerone.pratice.config.ProxyProtocol
 import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.config.RoutingMode
@@ -248,24 +247,24 @@ class AppVpnService : VpnService() {
         }
 
         val settingsStore = ProxySettingsStore(this)
-        val host = activeProxyHost
-        val port = activeProxyPort
-        val protocol = activeProxyProtocol
-        val httpTrafficMode = settingsStore.loadHttpTrafficMode()
-        val proxyBypassRules = settingsStore.loadProxyBypassList()
-        if (host.isNullOrBlank() || port !in 1..65535) {
-            return false
-        }
+        val plan = VpnSessionPlanner.createPlan(
+            activeHost = activeProxyHost,
+            activePort = activeProxyPort,
+            activeProtocol = activeProxyProtocol,
+            httpTrafficMode = settingsStore.loadHttpTrafficMode(),
+            proxyBypassRules = settingsStore.loadProxyBypassList(),
+            selectedPackages = settingsStore.loadBypassPackages(),
+            routingMode = settingsStore.loadRoutingMode()
+        ) ?: return false
 
-        val safeHost = EndpointSanitizer.sanitizeHost(host)
         val builder = Builder()
             .setSession("Pratice VPN")
             .setMtu(1500)
             .addAddress("10.8.0.2", 32)
             .addRoute("0.0.0.0", 0)
 
-        if (protocol == ProxyProtocol.Http) {
-            VpnRuntimeState.appendLog("HTTP traffic mode: ${httpTrafficMode.name}")
+        if (plan.protocol == ProxyProtocol.Http) {
+            VpnRuntimeState.appendLog("HTTP traffic mode: ${plan.httpTrafficMode.name}")
             builder.addDnsServer(MAP_DNS_ADDRESS)
             VpnRuntimeState.appendLog("Mapped DNS enabled at $MAP_DNS_ADDRESS for HTTP upstream.")
         } else {
@@ -281,19 +280,19 @@ class AppVpnService : VpnService() {
             VpnRuntimeState.appendLog("IPv6 route unavailable. Continuing with IPv4 only.")
         }
 
-        if (protocol == ProxyProtocol.Http) {
+        if (plan.protocol == ProxyProtocol.Http) {
             try {
-                val proxyInfo = if (proxyBypassRules.isEmpty()) {
-                    ProxyInfo.buildDirectProxy(safeHost, port)
+                val proxyInfo = if (plan.proxyBypassRules.isEmpty()) {
+                    ProxyInfo.buildDirectProxy(plan.safeHost, plan.port)
                 } else {
-                    ProxyInfo.buildDirectProxy(safeHost, port, proxyBypassRules)
+                    ProxyInfo.buildDirectProxy(plan.safeHost, plan.port, plan.proxyBypassRules)
                 }
                 builder.setHttpProxy(proxyInfo)
-                if (proxyBypassRules.isEmpty()) {
-                    VpnRuntimeState.appendLog("HTTP proxy bridge enabled for $safeHost:$port")
+                if (plan.proxyBypassRules.isEmpty()) {
+                    VpnRuntimeState.appendLog("HTTP proxy bridge enabled for ${plan.safeHost}:${plan.port}")
                 } else {
                     VpnRuntimeState.appendLog(
-                        "HTTP proxy bridge enabled for $safeHost:$port with ${proxyBypassRules.size} bypass rules"
+                        "HTTP proxy bridge enabled for ${plan.safeHost}:${plan.port} with ${plan.proxyBypassRules.size} bypass rules"
                     )
                 }
             } catch (_: Exception) {
@@ -301,12 +300,9 @@ class AppVpnService : VpnService() {
             }
         }
 
-        val selectedPackages = settingsStore.loadBypassPackages()
-        val routingMode = settingsStore.loadRoutingMode()
-
-        selectedPackages.forEach { packageName ->
+        plan.selectedPackages.forEach { packageName ->
             try {
-                if (routingMode == RoutingMode.Allowlist) {
+                if (plan.routingMode == RoutingMode.Allowlist) {
                     builder.addAllowedApplication(packageName)
                 } else {
                     builder.addDisallowedApplication(packageName)
@@ -317,22 +313,22 @@ class AppVpnService : VpnService() {
         }
 
         VpnRuntimeState.appendLog(
-            if (routingMode == RoutingMode.Allowlist) {
-                "VPN routing mode: allowlist (${selectedPackages.size} apps)"
+            if (plan.routingMode == RoutingMode.Allowlist) {
+                "VPN routing mode: allowlist (${plan.selectedPackages.size} apps)"
             } else {
-                "VPN routing mode: bypass (${selectedPackages.size} apps)"
+                "VPN routing mode: bypass (${plan.selectedPackages.size} apps)"
             }
         )
 
         vpnInterface = builder.establish()
         val tunnelFd = vpnInterface?.fd ?: return false
-        appTrafficMonitor.configureAndStart(routingMode, selectedPackages)
+        appTrafficMonitor.configureAndStart(plan.routingMode, plan.selectedPackages)
         val (bridgeHost, bridgePort, udpMode) = resolveTunnelProxyEndpoint(
-            protocol = protocol,
-            upstreamHost = safeHost,
-            upstreamPort = port,
-            proxyBypassRules = proxyBypassRules,
-            allowDirectFallbackForNonHttpPorts = httpTrafficMode == HttpTrafficMode.CompatFallback
+            protocol = plan.protocol,
+            upstreamHost = plan.safeHost,
+            upstreamPort = plan.port,
+            proxyBypassRules = plan.proxyBypassRules,
+            allowDirectFallbackForNonHttpPorts = plan.allowDirectFallbackForNonHttpPorts
         )
         if (bridgePort !in 1..65535) {
             return false
@@ -341,7 +337,7 @@ class AppVpnService : VpnService() {
             host = bridgeHost,
             port = bridgePort,
             udpMode = udpMode,
-            enableMappedDns = protocol == ProxyProtocol.Http
+            enableMappedDns = plan.enableMappedDns
         ) ?: return false
         bridgeManager.start(tunnelFd, configFile)
         return true
