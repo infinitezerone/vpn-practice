@@ -26,7 +26,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class AppVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -38,7 +37,6 @@ class AppVpnService : VpnService() {
     private var statsJob: Job? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startJob: Job? = null
-    private var stopJob: Job? = null
     @Volatile
     private var startFailed = false
     @Volatile
@@ -106,7 +104,6 @@ class AppVpnService : VpnService() {
         isShuttingDown = true
         unregisterNetworkCallback()
         startJob?.cancel()
-        stopJob?.cancel()
         bridgeJob?.cancel()
         statsJob?.cancel()
         if (!stopRequested) {
@@ -327,24 +324,19 @@ class AppVpnService : VpnService() {
         }
         stopRequested = true
         stopAlreadyReported = true
+        isShuttingDown = true
         VpnRuntimeState.setStopped(reason)
-
-        stopJob?.cancel()
-        stopJob = serviceScope.launch {
-            isShuttingDown = true
-            unregisterNetworkCallback()
-            startJob?.cancel()
-            bridgeJob?.cancel()
-            statsJob?.cancel()
-            withContext(Dispatchers.IO) {
-                stopBridge()
-            }
-            vpnInterface?.close()
-            vpnInterface = null
-            activeProxyHost = null
-            activeProxyPort = -1
-            stopSelf()
-        }
+        unregisterNetworkCallback()
+        startJob?.cancel()
+        bridgeJob?.cancel()
+        statsJob?.cancel()
+        vpnInterface?.close()
+        vpnInterface = null
+        activeProxyHost = null
+        activeProxyPort = -1
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        stopBridgeAsync()
     }
 
     private fun stopBridgeAsync() {
