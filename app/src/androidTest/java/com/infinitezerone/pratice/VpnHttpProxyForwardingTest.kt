@@ -10,8 +10,11 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
+import com.infinitezerone.pratice.config.ProxyProtocol
+import com.infinitezerone.pratice.vpn.ProxyConnectivityChecker
 
 class VpnHttpProxyForwardingTest {
     @get:Rule
@@ -24,6 +27,16 @@ class VpnHttpProxyForwardingTest {
         val proxyHost = args.getString(ARG_PROXY_HOST) ?: DEFAULT_PROXY_HOST
         val proxyPort = args.getString(ARG_PROXY_PORT)?.toIntOrNull() ?: DEFAULT_PROXY_PORT
         val device = UiDevice.getInstance(instrumentation)
+
+        val preflightError = ProxyConnectivityChecker.testConnection(
+            host = proxyHost,
+            port = proxyPort,
+            protocol = ProxyProtocol.Http
+        )
+        assumeTrue(
+            "Skipping HTTP forwarding test: proxy $proxyHost:$proxyPort is not HTTP-reachable ($preflightError)",
+            preflightError == null
+        )
 
         device.executeShellCommand("logcat -c")
 
