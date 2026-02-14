@@ -434,6 +434,7 @@ class AppVpnService : VpnService() {
             },
             bypassVpnForSocket = { socket -> bypassVpnForSocket(socket) },
             allowDirectFallbackForNonHttpPorts = allowDirectFallbackForNonHttpPorts,
+            allowDirectFallbackOnConnectFailure = allowDirectFallbackForNonHttpPorts,
             logger = { message -> VpnRuntimeState.appendLog(message) }
         )
         val localPort = bridge.start()

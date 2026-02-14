@@ -24,6 +24,7 @@ class HttpConnectSocksBridge(
     private val proxyBypassRuleMatcher: (String, Int) -> String?,
     private val bypassVpnForSocket: (Socket) -> Boolean,
     private val allowDirectFallbackForNonHttpPorts: Boolean,
+    private val allowDirectFallbackOnConnectFailure: Boolean,
     private val logger: (String) -> Unit
 ) {
     @Volatile
@@ -164,6 +165,19 @@ class HttpConnectSocksBridge(
 
                 val connectResult = readConnectResponse(upstreamInput)
                 if (!connectResult.first) {
+                    if (allowDirectFallbackOnConnectFailure) {
+                        if (startDirectPassthrough(
+                                connectionId = connectionId,
+                                destination = destination,
+                                reason = "proxy CONNECT rejected (${connectResult.second})",
+                                clientInput = clientInput,
+                                clientOutput = clientOutput,
+                                socksClient = socksClient
+                            )
+                        ) {
+                            return
+                        }
+                    }
                     sendSocksFailure(clientOutput, REP_CONNECTION_REFUSED)
                     logger(
                         "HTTP bridge conn#$connectionId CONNECT ${destination.first}:${destination.second} rejected: ${connectResult.second}"
@@ -185,6 +199,19 @@ class HttpConnectSocksBridge(
                     socksClient = socksClient
                 )
             } catch (e: Exception) {
+                if (allowDirectFallbackOnConnectFailure) {
+                    if (startDirectPassthrough(
+                            connectionId = connectionId,
+                            destination = destination,
+                            reason = "proxy error ${e.javaClass.simpleName}",
+                            clientInput = clientInput,
+                            clientOutput = clientOutput,
+                            socksClient = socksClient
+                        )
+                    ) {
+                        return
+                    }
+                }
                 try {
                     sendSocksFailure(clientOutput, REP_GENERAL_FAILURE)
                 } catch (_: Exception) {
