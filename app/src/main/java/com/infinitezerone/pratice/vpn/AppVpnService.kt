@@ -5,11 +5,13 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.ProxyInfo
+import android.net.TrafficStats
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -38,7 +40,10 @@ class AppVpnService : VpnService() {
     private var activeProxyProtocol: ProxyProtocol = ProxyProtocol.Socks5
     private var bridgeJob: Job? = null
     private var statsJob: Job? = null
+    private var appTrafficJob: Job? = null
     private var httpBridge: HttpConnectSocksBridge? = null
+    private val monitoredUidToLabel = mutableMapOf<Int, String>()
+    private val lastUidTraffic = mutableMapOf<Int, Pair<Long, Long>>()
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startJob: Job? = null
     @Volatile
@@ -114,6 +119,7 @@ class AppVpnService : VpnService() {
         startJob?.cancel()
         bridgeJob?.cancel()
         statsJob?.cancel()
+        appTrafficJob?.cancel()
         if (!stopRequested) {
             stopBridgeAsync()
         }
@@ -121,6 +127,8 @@ class AppVpnService : VpnService() {
         vpnInterface?.close()
         vpnInterface = null
         stopHttpBridge()
+        monitoredUidToLabel.clear()
+        lastUidTraffic.clear()
         activeProxyHost = null
         activeProxyPort = -1
         activeProxyProtocol = ProxyProtocol.Socks5
@@ -288,6 +296,7 @@ class AppVpnService : VpnService() {
 
         vpnInterface = builder.establish()
         val tunnelFd = vpnInterface?.fd ?: return false
+        configurePerAppTrafficMonitor(routingMode, selectedPackages)
         val (bridgeHost, bridgePort, udpMode) = resolveTunnelProxyEndpoint(protocol, safeHost, port)
         if (bridgePort !in 1..65535) {
             return false
@@ -372,6 +381,9 @@ class AppVpnService : VpnService() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         stopBridgeAsync()
+        appTrafficJob?.cancel()
+        monitoredUidToLabel.clear()
+        lastUidTraffic.clear()
     }
 
     private fun stopBridgeAsync() {
@@ -454,6 +466,114 @@ class AppVpnService : VpnService() {
     private fun stopHttpBridge() {
         httpBridge?.stop()
         httpBridge = null
+    }
+
+    private fun configurePerAppTrafficMonitor(routingMode: RoutingMode, selectedPackages: Set<String>) {
+        appTrafficJob?.cancel()
+        monitoredUidToLabel.clear()
+        lastUidTraffic.clear()
+
+        val monitoredPackages = when (routingMode) {
+            RoutingMode.Allowlist -> selectedPackages
+            RoutingMode.Bypass -> {
+                val launchablePackages = getInstalledApplicationsCompat(packageManager)
+                    .asSequence()
+                    .filter { appInfo ->
+                        appInfo.packageName != packageName &&
+                            packageManager.getLaunchIntentForPackage(appInfo.packageName) != null
+                    }
+                    .map { it.packageName }
+                    .toSet()
+                launchablePackages - selectedPackages
+            }
+        }
+
+        monitoredPackages.forEach { monitoredPackage ->
+            try {
+                val appInfo = packageManager.getApplicationInfo(monitoredPackage, 0)
+                val uid = appInfo.uid
+                if (!monitoredUidToLabel.containsKey(uid)) {
+                    val label = packageManager.getApplicationLabel(appInfo).toString()
+                    monitoredUidToLabel[uid] = "$label ($monitoredPackage)"
+                }
+            } catch (_: Exception) {
+                // Ignore stale packages.
+            }
+        }
+
+        if (monitoredUidToLabel.isEmpty()) {
+            VpnRuntimeState.appendLog("App traffic monitor unavailable: no matching app UIDs.")
+            return
+        }
+
+        val sample = monitoredUidToLabel.values.take(5).joinToString()
+        VpnRuntimeState.appendLog(
+            "App traffic monitor active for ${monitoredUidToLabel.size} apps. Sample: $sample"
+        )
+        startPerAppTrafficMonitor()
+    }
+
+    private fun startPerAppTrafficMonitor() {
+        appTrafficJob?.cancel()
+        appTrafficJob = serviceScope.launch {
+            monitoredUidToLabel.keys.forEach { uid ->
+                val rx = TrafficStats.getUidRxBytes(uid)
+                val tx = TrafficStats.getUidTxBytes(uid)
+                if (rx >= 0L && tx >= 0L) {
+                    lastUidTraffic[uid] = rx to tx
+                }
+            }
+
+            while (!isShuttingDown && !stopRequested) {
+                delay(4_000)
+                val deltas = mutableListOf<Pair<String, Long>>()
+                monitoredUidToLabel.forEach { (uid, label) ->
+                    val rxNow = TrafficStats.getUidRxBytes(uid)
+                    val txNow = TrafficStats.getUidTxBytes(uid)
+                    if (rxNow < 0L || txNow < 0L) {
+                        return@forEach
+                    }
+                    val previous = lastUidTraffic[uid]
+                    if (previous == null) {
+                        lastUidTraffic[uid] = rxNow to txNow
+                        return@forEach
+                    }
+                    val rxDelta = (rxNow - previous.first).coerceAtLeast(0L)
+                    val txDelta = (txNow - previous.second).coerceAtLeast(0L)
+                    lastUidTraffic[uid] = rxNow to txNow
+                    val total = rxDelta + txDelta
+                    if (total > 0L) {
+                        val summary = "$label rx=${formatBytes(rxDelta)} tx=${formatBytes(txDelta)}"
+                        deltas += summary to total
+                    }
+                }
+
+                if (deltas.isNotEmpty()) {
+                    val top = deltas
+                        .sortedByDescending { it.second }
+                        .take(4)
+                        .joinToString(separator = " | ") { it.first }
+                    VpnRuntimeState.appendLog("VPN app traffic: $top")
+                }
+            }
+        }
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        return when {
+            bytes >= 1024L * 1024L -> String.format("%.1fMB", bytes / (1024f * 1024f))
+            bytes >= 1024L -> String.format("%.1fKB", bytes / 1024f)
+            else -> "${bytes}B"
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun getInstalledApplicationsCompat(packageManager: PackageManager): List<ApplicationInfo> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
+        } else {
+            packageManager.getInstalledApplications(0)
+        }
     }
 
     private fun buildNotification(host: String, port: Int): Notification =
