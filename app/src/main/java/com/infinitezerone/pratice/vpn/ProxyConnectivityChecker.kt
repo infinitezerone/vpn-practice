@@ -8,15 +8,17 @@ object ProxyConnectivityChecker {
         host: String,
         port: Int,
         timeoutMs: Int = 3_000,
-        protectSocket: ((Socket) -> Boolean)? = null
+        protectSocket: ((Socket) -> Boolean)? = null,
+        connectAddress: InetSocketAddress? = null
     ): String? {
         val safeHost = EndpointSanitizer.sanitizeHost(host)
+        val targetAddress = connectAddress ?: InetSocketAddress(safeHost, port)
         return try {
             Socket().use { socket ->
                 if (protectSocket != null && !protectSocket.invoke(socket)) {
                     return "Cannot protect proxy socket for $safeHost:$port."
                 }
-                socket.connect(InetSocketAddress(safeHost, port), timeoutMs)
+                socket.connect(targetAddress, timeoutMs)
             }
             null
         } catch (e: Exception) {

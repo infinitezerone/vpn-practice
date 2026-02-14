@@ -9,6 +9,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 
 /**
@@ -18,13 +19,15 @@ import kotlin.concurrent.thread
 class HttpConnectSocksBridge(
     private val upstreamHost: String,
     private val upstreamPort: Int,
-    private val protectSocket: (Socket) -> Boolean,
+    private val upstreamEndpointProvider: () -> InetSocketAddress?,
+    private val bypassVpnForSocket: (Socket) -> Boolean,
     private val logger: (String) -> Unit
 ) {
     @Volatile
     private var running = false
     private var serverSocket: ServerSocket? = null
     private var acceptThread: Thread? = null
+    private val connectionCounter = AtomicLong(0)
 
     fun start(): Int {
         if (running) {
@@ -69,6 +72,7 @@ class HttpConnectSocksBridge(
     }
 
     private fun handleClient(client: Socket) {
+        val connectionId = connectionCounter.incrementAndGet()
         client.use { socksClient ->
             val clientInput = BufferedInputStream(socksClient.getInputStream())
             val clientOutput = BufferedOutputStream(socksClient.getOutputStream())
@@ -78,52 +82,77 @@ class HttpConnectSocksBridge(
             }
 
             val destination = parseConnectRequest(clientInput, clientOutput) ?: return
+            logger("HTTP bridge conn#$connectionId SOCKS CONNECT ${destination.first}:${destination.second}")
             val upstream = Socket()
             try {
-                if (!protectSocket(upstream)) {
+                if (!bypassVpnForSocket(upstream)) {
                     sendSocksFailure(clientOutput, REP_GENERAL_FAILURE)
-                    logger("HTTP bridge failed to protect upstream socket.")
+                    logger("HTTP bridge conn#$connectionId failed: cannot bypass VPN for upstream socket")
                     return
                 }
-                upstream.connect(InetSocketAddress(upstreamHost, upstreamPort), CONNECT_TIMEOUT_MS)
+                val upstreamEndpoint = upstreamEndpointProvider()
+                if (upstreamEndpoint == null) {
+                    sendSocksFailure(clientOutput, REP_HOST_UNREACHABLE)
+                    logger("HTTP bridge conn#$connectionId failed: cannot resolve upstream proxy host")
+                    return
+                }
+                upstream.connect(upstreamEndpoint, CONNECT_TIMEOUT_MS)
                 upstream.soTimeout = CONNECT_TIMEOUT_MS
+                logger(
+                    "HTTP bridge conn#$connectionId upstream ${upstreamEndpoint.hostString}:${upstreamEndpoint.port} connected"
+                )
 
                 val upstreamInput = BufferedInputStream(upstream.getInputStream())
                 val upstreamOutput = BufferedOutputStream(upstream.getOutputStream())
+                if (isUpstreamPassthroughDestination(destination, upstreamEndpoint)) {
+                    logger("HTTP bridge conn#$connectionId passthrough mode for direct proxy destination")
+                    sendSocksSuccess(clientOutput)
+                    pipeBidirectional(
+                        connectionId = connectionId,
+                        clientInput = clientInput,
+                        clientOutput = clientOutput,
+                        upstreamInput = upstreamInput,
+                        upstreamOutput = upstreamOutput,
+                        upstream = upstream,
+                        socksClient = socksClient
+                    )
+                    return
+                }
                 val connectRequest = buildConnectRequest(destination.first, destination.second)
                 upstreamOutput.write(connectRequest.toByteArray(StandardCharsets.ISO_8859_1))
                 upstreamOutput.flush()
 
-                if (!readConnectResponse(upstreamInput)) {
+                val connectResult = readConnectResponse(upstreamInput)
+                if (!connectResult.first) {
                     sendSocksFailure(clientOutput, REP_CONNECTION_REFUSED)
+                    logger(
+                        "HTTP bridge conn#$connectionId CONNECT ${destination.first}:${destination.second} rejected: ${connectResult.second}"
+                    )
                     return
                 }
+                logger(
+                    "HTTP bridge conn#$connectionId CONNECT ${destination.first}:${destination.second} accepted: ${connectResult.second}"
+                )
                 sendSocksSuccess(clientOutput)
-
-                val uplink = thread(isDaemon = true) {
-                    copyStream(clientInput, upstreamOutput)
-                    try {
-                        upstream.shutdownOutput()
-                    } catch (_: Exception) {
-                        // Ignored.
-                    }
-                }
-                val downlink = thread(isDaemon = true) {
-                    copyStream(upstreamInput, clientOutput)
-                    try {
-                        socksClient.shutdownOutput()
-                    } catch (_: Exception) {
-                        // Ignored.
-                    }
-                }
-                uplink.join()
-                downlink.join()
-            } catch (_: Exception) {
+                pipeBidirectional(
+                    connectionId = connectionId,
+                    clientInput = clientInput,
+                    clientOutput = clientOutput,
+                    upstreamInput = upstreamInput,
+                    upstreamOutput = upstreamOutput,
+                    upstream = upstream,
+                    socksClient = socksClient
+                )
+            } catch (e: Exception) {
                 try {
                     sendSocksFailure(clientOutput, REP_GENERAL_FAILURE)
                 } catch (_: Exception) {
                     // Ignored.
                 }
+                logger(
+                    "HTTP bridge conn#$connectionId failed: ${e.javaClass.simpleName}" +
+                        (e.message?.let { " ($it)" } ?: "")
+                )
             } finally {
                 try {
                     upstream.close()
@@ -132,6 +161,59 @@ class HttpConnectSocksBridge(
                 }
             }
         }
+    }
+
+    private fun pipeBidirectional(
+        connectionId: Long,
+        clientInput: BufferedInputStream,
+        clientOutput: BufferedOutputStream,
+        upstreamInput: BufferedInputStream,
+        upstreamOutput: BufferedOutputStream,
+        upstream: Socket,
+        socksClient: Socket
+    ) {
+        val uplinkBytes = AtomicLong(0)
+        val downlinkBytes = AtomicLong(0)
+        val uplink = thread(isDaemon = true) {
+            val copied = copyStream(clientInput, upstreamOutput)
+            uplinkBytes.set(copied)
+            try {
+                upstream.shutdownOutput()
+            } catch (_: Exception) {
+                // Ignored.
+            }
+        }
+        val downlink = thread(isDaemon = true) {
+            val copied = copyStream(upstreamInput, clientOutput)
+            downlinkBytes.set(copied)
+            try {
+                socksClient.shutdownOutput()
+            } catch (_: Exception) {
+                // Ignored.
+            }
+        }
+        uplink.join()
+        downlink.join()
+        logger(
+            "HTTP bridge conn#$connectionId closed up=${formatBytes(uplinkBytes.get())} down=${formatBytes(downlinkBytes.get())}"
+        )
+    }
+
+    private fun isUpstreamPassthroughDestination(
+        destination: Pair<String, Int>,
+        upstreamEndpoint: InetSocketAddress
+    ): Boolean {
+        val (destinationHost, destinationPort) = destination
+        if (destinationPort != upstreamPort) {
+            return false
+        }
+        val normalizedDestination = destinationHost.trim().lowercase()
+        val normalizedUpstreamHost = upstreamHost.trim().lowercase()
+        if (normalizedDestination == normalizedUpstreamHost) {
+            return true
+        }
+        val upstreamIp = upstreamEndpoint.address?.hostAddress?.trim()?.lowercase()
+        return upstreamIp != null && normalizedDestination == upstreamIp
     }
 
     private fun performSocksHandshake(
@@ -211,13 +293,13 @@ class HttpConnectSocksBridge(
         }
     }
 
-    private fun readConnectResponse(input: BufferedInputStream): Boolean {
+    private fun readConnectResponse(input: BufferedInputStream): Pair<Boolean, String> {
         val header = ByteArrayOutputStream()
         var state = 0
         while (header.size() < MAX_HTTP_HEADER_BYTES) {
             val b = input.read()
             if (b < 0) {
-                return false
+                return false to "unexpected EOF from upstream proxy"
             }
             header.write(b)
             state = when {
@@ -232,8 +314,9 @@ class HttpConnectSocksBridge(
             }
         }
         val response = header.toString(StandardCharsets.ISO_8859_1.name())
-        val statusLine = response.lineSequence().firstOrNull() ?: return false
-        return statusLine.startsWith("HTTP/1.1 200") || statusLine.startsWith("HTTP/1.0 200")
+        val statusLine = response.lineSequence().firstOrNull() ?: return false to "missing HTTP status line"
+        val ok = statusLine.startsWith("HTTP/1.1 200") || statusLine.startsWith("HTTP/1.0 200")
+        return ok to statusLine
     }
 
     private fun sendSocksSuccess(output: BufferedOutputStream) {
@@ -264,8 +347,9 @@ class HttpConnectSocksBridge(
         output.flush()
     }
 
-    private fun copyStream(input: BufferedInputStream, output: BufferedOutputStream) {
+    private fun copyStream(input: BufferedInputStream, output: BufferedOutputStream): Long {
         val buffer = ByteArray(8 * 1024)
+        var totalBytes = 0L
         while (true) {
             val count = try {
                 input.read(buffer)
@@ -278,10 +362,12 @@ class HttpConnectSocksBridge(
             try {
                 output.write(buffer, 0, count)
                 output.flush()
+                totalBytes += count.toLong()
             } catch (_: Exception) {
                 break
             }
         }
+        return totalBytes
     }
 
     private fun BufferedInputStream.readExact(buffer: ByteArray) {
@@ -319,10 +405,19 @@ class HttpConnectSocksBridge(
         const val ATYP_IPV6 = 0x04
         const val REP_SUCCESS = 0x00
         const val REP_GENERAL_FAILURE = 0x01
+        const val REP_HOST_UNREACHABLE = 0x04
         const val REP_CONNECTION_REFUSED = 0x05
         const val REP_COMMAND_NOT_SUPPORTED = 0x07
         const val REP_ADDRESS_TYPE_NOT_SUPPORTED = 0x08
         const val CONNECT_TIMEOUT_MS = 5_000
         const val MAX_HTTP_HEADER_BYTES = 16 * 1024
+    }
+
+    private fun formatBytes(bytes: Long): String {
+        return when {
+            bytes >= 1024L * 1024L -> String.format("%.1fMB", bytes / (1024f * 1024f))
+            bytes >= 1024L -> String.format("%.1fKB", bytes / 1024f)
+            else -> "${bytes}B"
+        }
     }
 }

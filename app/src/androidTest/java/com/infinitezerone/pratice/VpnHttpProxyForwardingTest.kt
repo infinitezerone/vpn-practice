@@ -43,6 +43,11 @@ class VpnHttpProxyForwardingTest {
         val logs = device.executeShellCommand("logcat -d -s PraticeVPN:I")
         assertTrue("Expected HTTP local bridge log. Logs:\n$logs", logs.contains("HTTP upstream enabled via local SOCKS bridge"))
         assertTrue("Expected tun2socks to start. Logs:\n$logs", logs.contains("Starting tun2socks bridge."))
+        assertTrue(
+            "Expected HTTP bridge connection telemetry. Logs:\n$logs",
+            logs.contains("HTTP bridge conn#") &&
+                (logs.contains(" accepted: HTTP/1.") || logs.contains("passthrough mode for direct proxy destination"))
+        )
         assertTrue("Expected bridge stats to show non-zero traffic. Logs:\n$logs", hasNonZeroStats(logs))
     }
 

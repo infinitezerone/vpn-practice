@@ -23,6 +23,8 @@ import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.config.RoutingMode
 import org.amnezia.awg.hevtunnel.TProxyService
 import java.io.File
+import java.net.InetAddress
+import java.net.InetSocketAddress
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -35,6 +37,8 @@ class AppVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    @Volatile
+    private var lastNonVpnNetwork: Network? = null
     private var activeProxyHost: String? = null
     private var activeProxyPort: Int = -1
     private var activeProxyProtocol: ProxyProtocol = ProxyProtocol.Socks5
@@ -132,6 +136,7 @@ class AppVpnService : VpnService() {
         activeProxyHost = null
         activeProxyPort = -1
         activeProxyProtocol = ProxyProtocol.Socks5
+        lastNonVpnNetwork = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         val preserveErrorState = !stopRequested && VpnRuntimeState.state.value.status == RuntimeStatus.Error
         if (!stopAlreadyReported && !preserveErrorState) {
@@ -145,6 +150,8 @@ class AppVpnService : VpnService() {
             return
         }
         connectivityManager = getSystemService(ConnectivityManager::class.java)
+        lastNonVpnNetwork = findBestNonVpnNetwork(connectivityManager)
+        updateUnderlyingNetworkHint(lastNonVpnNetwork)
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 if (stopRequested || isShuttingDown) {
@@ -155,6 +162,8 @@ class AppVpnService : VpnService() {
                 ) {
                     return
                 }
+                lastNonVpnNetwork = network
+                updateUnderlyingNetworkHint(network)
                 if (vpnInterface == null) {
                     return
                 }
@@ -193,6 +202,10 @@ class AppVpnService : VpnService() {
             }
 
             override fun onLost(network: Network) {
+                if (network == lastNonVpnNetwork) {
+                    lastNonVpnNetwork = findBestNonVpnNetwork(connectivityManager)
+                    updateUnderlyingNetworkHint(lastNonVpnNetwork)
+                }
                 VpnRuntimeState.appendLog("Network lost.")
             }
         }
@@ -212,6 +225,8 @@ class AppVpnService : VpnService() {
             // Callback already unregistered.
         } finally {
             networkCallback = null
+            lastNonVpnNetwork = null
+            updateUnderlyingNetworkHint(null)
         }
     }
 
@@ -239,8 +254,14 @@ class AppVpnService : VpnService() {
             .setMtu(1500)
             .addAddress("10.8.0.2", 32)
             .addRoute("0.0.0.0", 0)
-            .addDnsServer("1.1.1.1")
-            .addDnsServer("8.8.8.8")
+
+        if (protocol == ProxyProtocol.Http) {
+            builder.addDnsServer(MAP_DNS_ADDRESS)
+            VpnRuntimeState.appendLog("Mapped DNS enabled at $MAP_DNS_ADDRESS for HTTP upstream.")
+        } else {
+            builder.addDnsServer("1.1.1.1")
+            builder.addDnsServer("8.8.8.8")
+        }
 
         try {
             // IPv6 is optional; some devices or networks may not support it.
@@ -301,11 +322,17 @@ class AppVpnService : VpnService() {
         if (bridgePort !in 1..65535) {
             return false
         }
-        return startBridge(tunnelFd, bridgeHost, bridgePort, udpMode)
+        return startBridge(tunnelFd, bridgeHost, bridgePort, udpMode, protocol == ProxyProtocol.Http)
     }
 
-    private fun startBridge(tunnelFd: Int, host: String, port: Int, udpMode: String): Boolean {
-        val configFile = writeHevTunnelConfig(host, port, udpMode) ?: return false
+    private fun startBridge(
+        tunnelFd: Int,
+        host: String,
+        port: Int,
+        udpMode: String,
+        enableMappedDns: Boolean
+    ): Boolean {
+        val configFile = writeHevTunnelConfig(host, port, udpMode, enableMappedDns) ?: return false
 
         bridgeJob?.cancel()
         bridgeJob = serviceScope.launch {
@@ -378,6 +405,8 @@ class AppVpnService : VpnService() {
         activeProxyHost = null
         activeProxyPort = -1
         activeProxyProtocol = ProxyProtocol.Socks5
+        lastNonVpnNetwork = null
+        updateUnderlyingNetworkHint(null)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         stopBridgeAsync()
@@ -392,21 +421,34 @@ class AppVpnService : VpnService() {
         }
     }
 
-    private fun writeHevTunnelConfig(host: String, port: Int, udpMode: String): File? {
+    private fun writeHevTunnelConfig(
+        host: String,
+        port: Int,
+        udpMode: String,
+        enableMappedDns: Boolean
+    ): File? {
         return try {
             val configFile = File(filesDir, HEV_CONFIG_FILE)
-            val config = """
-                socks5:
-                  address: "$host"
-                  port: $port
-                  udp: "$udpMode"
-                tcp:
-                  connect-timeout: 5000
-                  idle-timeout: 600
-                misc:
-                  task-stack-size: 24576
-            """.trimIndent()
-            configFile.writeText(config)
+            val config = buildString {
+                appendLine("socks5:")
+                appendLine("  address: \"$host\"")
+                appendLine("  port: $port")
+                appendLine("  udp: \"$udpMode\"")
+                if (enableMappedDns) {
+                    appendLine("mapdns:")
+                    appendLine("  address: \"$MAP_DNS_ADDRESS\"")
+                    appendLine("  port: $MAP_DNS_PORT")
+                    appendLine("  network: \"$MAP_DNS_NETWORK\"")
+                    appendLine("  netmask: \"$MAP_DNS_NETMASK\"")
+                    appendLine("  cache-size: $MAP_DNS_CACHE_SIZE")
+                }
+                appendLine("tcp:")
+                appendLine("  connect-timeout: 5000")
+                appendLine("  idle-timeout: 600")
+                appendLine("misc:")
+                appendLine("  task-stack-size: 24576")
+            }
+            configFile.writeText(config.trimEnd())
             configFile
         } catch (_: Exception) {
             null
@@ -425,7 +467,23 @@ class AppVpnService : VpnService() {
             } else {
                 null
             }
-            val error = ProxyConnectivityChecker.testConnection(host, port, protectSocket = protector)
+            val connectAddress = resolveUpstreamProxyAddress(host, port)
+            if (connectAddress == null) {
+                lastError = "Cannot resolve proxy ${EndpointSanitizer.sanitizeHost(host)}:$port."
+                if (attempt < maxAttempts) {
+                    VpnRuntimeState.appendLog("Proxy DNS resolution failed, retrying in ${backoffMs / 1000}s")
+                    delay(backoffMs)
+                    backoffMs *= 2
+                    continue
+                }
+                break
+            }
+            val error = ProxyConnectivityChecker.testConnection(
+                host = host,
+                port = port,
+                protectSocket = protector,
+                connectAddress = connectAddress
+            )
             if (error == null) {
                 return null
             }
@@ -454,7 +512,22 @@ class AppVpnService : VpnService() {
         val bridge = HttpConnectSocksBridge(
             upstreamHost = upstreamHost,
             upstreamPort = upstreamPort,
-            protectSocket = { socket -> protect(socket) },
+            upstreamEndpointProvider = {
+                resolveUpstreamProxyAddress(upstreamHost, upstreamPort)
+            },
+            bypassVpnForSocket = { socket ->
+                val network = lastNonVpnNetwork
+                if (network != null) {
+                    try {
+                        network.bindSocket(socket)
+                        true
+                    } catch (_: Exception) {
+                        protect(socket)
+                    }
+                } else {
+                    protect(socket)
+                }
+            },
             logger = { message -> VpnRuntimeState.appendLog(message) }
         )
         val localPort = bridge.start()
@@ -463,9 +536,51 @@ class AppVpnService : VpnService() {
         return Triple("127.0.0.1", localPort, "tcp")
     }
 
+    private fun resolveUpstreamProxyAddress(host: String, port: Int): InetSocketAddress? {
+        val safeHost = EndpointSanitizer.sanitizeHost(host)
+        if (port !in 1..65535 || safeHost.isBlank()) {
+            return null
+        }
+        val network = lastNonVpnNetwork
+        if (network != null) {
+            try {
+                val resolved = network.getByName(safeHost)
+                return InetSocketAddress(resolved, port)
+            } catch (_: Exception) {
+                // Fallback to system DNS.
+            }
+        }
+        return try {
+            InetSocketAddress(InetAddress.getByName(safeHost), port)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun stopHttpBridge() {
         httpBridge?.stop()
         httpBridge = null
+    }
+
+    private fun updateUnderlyingNetworkHint(network: Network?) {
+        try {
+            if (network == null) {
+                setUnderlyingNetworks(null)
+            } else {
+                setUnderlyingNetworks(arrayOf(network))
+            }
+        } catch (_: Exception) {
+            // Hint API may be unavailable on some devices.
+        }
+    }
+
+    private fun findBestNonVpnNetwork(manager: ConnectivityManager?): Network? {
+        val cm = manager ?: return null
+        return cm.allNetworks.firstOrNull { network ->
+            val capabilities = cm.getNetworkCapabilities(network) ?: return@firstOrNull false
+            !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        }
     }
 
     private fun configurePerAppTrafficMonitor(routingMode: RoutingMode, selectedPackages: Set<String>) {
@@ -625,6 +740,11 @@ class AppVpnService : VpnService() {
         private const val EXTRA_PROXY_PROTOCOL = "extra_proxy_protocol"
         private const val CHANNEL_ID = "pratice_vpn_channel"
         private const val NOTIFICATION_ID = 1001
+        private const val MAP_DNS_ADDRESS = "198.18.0.2"
+        private const val MAP_DNS_PORT = 53
+        private const val MAP_DNS_NETWORK = "100.64.0.0"
+        private const val MAP_DNS_NETMASK = "255.192.0.0"
+        private const val MAP_DNS_CACHE_SIZE = 4096
 
         fun start(
             context: Context,
