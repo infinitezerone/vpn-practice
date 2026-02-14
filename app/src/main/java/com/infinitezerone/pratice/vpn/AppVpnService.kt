@@ -15,6 +15,7 @@ import android.net.TrafficStats
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.infinitezerone.pratice.R
@@ -60,6 +61,7 @@ class AppVpnService : VpnService() {
     @Volatile
     private var stopRequested = false
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             requestStopAsync("VPN stopped.")
@@ -238,6 +240,7 @@ class AppVpnService : VpnService() {
         super.onRevoke()
     }
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun startVpnTunnel(): Boolean {
         if (vpnInterface != null) {
             return true
@@ -760,6 +763,10 @@ class AppVpnService : VpnService() {
             port: Int,
             protocol: ProxyProtocol = ProxyProtocol.Socks5
         ) {
+            if (prepare(context) != null) {
+                VpnRuntimeState.setError("VPN permission required. Open app and tap Start.")
+                return
+            }
             val intent = Intent(context, AppVpnService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_PROXY_HOST, host)
