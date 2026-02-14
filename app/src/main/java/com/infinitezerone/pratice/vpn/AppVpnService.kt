@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
-import android.net.NetworkCapabilities
 import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
@@ -22,7 +21,6 @@ import com.infinitezerone.pratice.config.ProxyProtocol
 import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.config.RoutingMode
 import java.io.File
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import kotlinx.coroutines.CoroutineScope
@@ -37,8 +35,7 @@ class AppVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
-    @Volatile
-    private var lastNonVpnNetwork: Network? = null
+    private val nonVpnNetworkTracker = NonVpnNetworkTracker()
     private var activeProxyHost: String? = null
     private var activeProxyPort: Int = -1
     private var activeProxyProtocol: ProxyProtocol = ProxyProtocol.Socks5
@@ -160,7 +157,7 @@ class AppVpnService : VpnService() {
         activeProxyHost = null
         activeProxyPort = -1
         activeProxyProtocol = ProxyProtocol.Socks5
-        lastNonVpnNetwork = null
+        nonVpnNetworkTracker.clear()
         stopForeground(STOP_FOREGROUND_REMOVE)
         val preserveErrorState = !stopRequested && VpnRuntimeState.state.value.status == RuntimeStatus.Error
         if (!stopAlreadyReported && !preserveErrorState) {
@@ -174,20 +171,17 @@ class AppVpnService : VpnService() {
             return
         }
         connectivityManager = getSystemService(ConnectivityManager::class.java)
-        lastNonVpnNetwork = findBestNonVpnNetwork(connectivityManager)
-        updateUnderlyingNetworkHint(lastNonVpnNetwork)
+        val initialNetwork = nonVpnNetworkTracker.initialize(connectivityManager)
+        updateUnderlyingNetworkHint(initialNetwork)
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 if (stopRequested || isShuttingDown) {
                     return
                 }
-                if (connectivityManager?.getNetworkCapabilities(network)
-                        ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
-                ) {
+                if (!nonVpnNetworkTracker.onAvailable(connectivityManager, network)) {
                     return
                 }
-                lastNonVpnNetwork = network
-                updateUnderlyingNetworkHint(network)
+                updateUnderlyingNetworkHint(nonVpnNetworkTracker.currentNetwork())
                 if (vpnInterface == null) {
                     return
                 }
@@ -226,10 +220,8 @@ class AppVpnService : VpnService() {
             }
 
             override fun onLost(network: Network) {
-                if (network == lastNonVpnNetwork) {
-                    lastNonVpnNetwork = findBestNonVpnNetwork(connectivityManager)
-                    updateUnderlyingNetworkHint(lastNonVpnNetwork)
-                }
+                nonVpnNetworkTracker.onLost(connectivityManager, network)
+                updateUnderlyingNetworkHint(nonVpnNetworkTracker.currentNetwork())
                 VpnRuntimeState.appendLog("Network lost.")
             }
         }
@@ -249,7 +241,7 @@ class AppVpnService : VpnService() {
             // Callback already unregistered.
         } finally {
             networkCallback = null
-            lastNonVpnNetwork = null
+            nonVpnNetworkTracker.clear()
             updateUnderlyingNetworkHint(null)
         }
     }
@@ -393,7 +385,7 @@ class AppVpnService : VpnService() {
         activeProxyHost = null
         activeProxyPort = -1
         activeProxyProtocol = ProxyProtocol.Socks5
-        lastNonVpnNetwork = null
+        nonVpnNetworkTracker.clear()
         updateUnderlyingNetworkHint(null)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -468,39 +460,11 @@ class AppVpnService : VpnService() {
     }
 
     private fun resolveUpstreamProxyAddress(host: String, port: Int): InetSocketAddress? {
-        val safeHost = EndpointSanitizer.sanitizeHost(host)
-        if (port !in 1..65535 || safeHost.isBlank()) {
-            return null
-        }
-        val network = lastNonVpnNetwork
-        if (network != null) {
-            try {
-                val resolved = network.getByName(safeHost)
-                return InetSocketAddress(resolved, port)
-            } catch (_: Exception) {
-                // Fallback to system DNS.
-            }
-        }
-        return try {
-            InetSocketAddress(InetAddress.getByName(safeHost), port)
-        } catch (_: Exception) {
-            null
-        }
+        return nonVpnNetworkTracker.resolveAddress(host, port)
     }
 
     private fun bypassVpnForSocket(socket: Socket): Boolean {
-        val protected = protect(socket)
-        val network = lastNonVpnNetwork
-        var bound = false
-        if (network != null) {
-            try {
-                network.bindSocket(socket)
-                bound = true
-            } catch (_: Exception) {
-                // Keep protected path result below.
-            }
-        }
-        return protected || bound
+        return nonVpnNetworkTracker.bypassVpnForSocket(socket) { targetSocket -> protect(targetSocket) }
     }
 
     private fun stopHttpBridge() {
@@ -517,15 +481,6 @@ class AppVpnService : VpnService() {
             }
         } catch (_: Exception) {
             // Hint API may be unavailable on some devices.
-        }
-    }
-
-    private fun findBestNonVpnNetwork(manager: ConnectivityManager?): Network? {
-        val cm = manager ?: return null
-        return cm.allNetworks.firstOrNull { network ->
-            val capabilities = cm.getNetworkCapabilities(network) ?: return@firstOrNull false
-            !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         }
     }
 
