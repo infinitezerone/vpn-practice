@@ -343,7 +343,10 @@ private fun VpnHome() {
                                 "Proxy test succeeded for ${proxyProtocol.name} ${EndpointSanitizer.sanitizeHost(host)}:$port"
                             )
                         } else {
-                            VpnRuntimeState.setError(error)
+                            infoMessage = "Proxy test failed: $error"
+                            VpnRuntimeState.appendLog(
+                                "Proxy test failed for ${proxyProtocol.name} ${EndpointSanitizer.sanitizeHost(host)}:$port - $error"
+                            )
                         }
                         isTestingConnection = false
                     }

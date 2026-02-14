@@ -30,6 +30,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -80,6 +81,7 @@ class AppVpnService : VpnService() {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification(host, port))
         registerNetworkCallback()
+        serviceScope.coroutineContext.cancelChildren()
 
         startFailed = false
         stopAlreadyReported = false
@@ -395,6 +397,7 @@ class AppVpnService : VpnService() {
         stopAlreadyReported = true
         isShuttingDown = true
         VpnRuntimeState.setStopped(reason)
+        serviceScope.coroutineContext.cancelChildren()
         unregisterNetworkCallback()
         startJob?.cancel()
         bridgeJob?.cancel()
