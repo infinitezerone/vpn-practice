@@ -31,6 +31,7 @@ class VpnProxyForwardingTest {
         composeRule.onNodeWithTag("proxy_host_input").performTextInput(proxyHost)
         composeRule.onNodeWithTag("proxy_port_input").performTextClearance()
         composeRule.onNodeWithTag("proxy_port_input").performTextInput(proxyPort.toString())
+        composeRule.onNodeWithTag("protocol_socks_button").performClick()
         composeRule.onNodeWithTag("start_button").performClick()
 
         acceptVpnDialogIfShown(device)

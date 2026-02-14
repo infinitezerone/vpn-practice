@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.infinitezerone.pratice.config.ProxyConfigValidator
+import com.infinitezerone.pratice.config.ProxyProtocol
 import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.config.RoutingMode
 import com.infinitezerone.pratice.vpn.AppVpnService
@@ -79,6 +80,8 @@ private data class InstalledApp(
 private const val TAG_PROXY_HOST_INPUT = "proxy_host_input"
 private const val TAG_PROXY_PORT_INPUT = "proxy_port_input"
 private const val TAG_PROXY_BYPASS_INPUT = "proxy_bypass_input"
+private const val TAG_PROTOCOL_SOCKS_BUTTON = "protocol_socks_button"
+private const val TAG_PROTOCOL_HTTP_BUTTON = "protocol_http_button"
 private const val TAG_START_BUTTON = "start_button"
 
 @Composable
@@ -89,6 +92,7 @@ private fun VpnHome() {
 
     var hostInput by rememberSaveable { mutableStateOf(settingsStore.loadHost()) }
     var portInput by rememberSaveable { mutableStateOf(settingsStore.loadPortText()) }
+    var proxyProtocol by remember { mutableStateOf(settingsStore.loadProxyProtocol()) }
     var proxyBypassRawInput by rememberSaveable { mutableStateOf(settingsStore.loadProxyBypassRawInput()) }
     var bypassPackages by remember { mutableStateOf(settingsStore.loadBypassPackages()) }
     var routingMode by remember { mutableStateOf(settingsStore.loadRoutingMode()) }
@@ -104,6 +108,7 @@ private fun VpnHome() {
 
     fun persistBaseSettings(host: String, port: Int) {
         settingsStore.save(host, port)
+        settingsStore.saveProxyProtocol(proxyProtocol)
         settingsStore.saveRoutingMode(routingMode)
         settingsStore.saveAutoReconnectEnabled(autoReconnect)
         settingsStore.saveProxyBypassRawInput(proxyBypassRawInput)
@@ -121,7 +126,7 @@ private fun VpnHome() {
             }
 
             persistBaseSettings(host, port)
-            AppVpnService.start(context, host, port)
+            AppVpnService.start(context, host, port, proxyProtocol)
             infoMessage = null
         } else {
             VpnRuntimeState.setError("VPN permission denied.")
@@ -160,6 +165,38 @@ private fun VpnHome() {
                 .fillMaxWidth()
                 .testTag(TAG_PROXY_PORT_INPUT)
         )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = "Proxy protocol",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = {
+                    proxyProtocol = ProxyProtocol.Socks5
+                    settingsStore.saveProxyProtocol(proxyProtocol)
+                    infoMessage = "Proxy protocol set to SOCKS5."
+                },
+                modifier = Modifier.testTag(TAG_PROTOCOL_SOCKS_BUTTON)
+            ) {
+                Text(if (proxyProtocol == ProxyProtocol.Socks5) "SOCKS5 (active)" else "SOCKS5")
+            }
+            OutlinedButton(
+                onClick = {
+                    proxyProtocol = ProxyProtocol.Http
+                    settingsStore.saveProxyProtocol(proxyProtocol)
+                    infoMessage = "Proxy protocol set to HTTP."
+                },
+                modifier = Modifier.testTag(TAG_PROTOCOL_HTTP_BUTTON)
+            ) {
+                Text(if (proxyProtocol == ProxyProtocol.Http) "HTTP (active)" else "HTTP")
+            }
+        }
         Spacer(modifier = Modifier.height(12.dp))
         OutlinedTextField(
             value = proxyBypassRawInput,
@@ -303,7 +340,7 @@ private fun VpnHome() {
                         if (error == null) {
                             infoMessage = "Proxy test succeeded."
                             VpnRuntimeState.appendLog(
-                                "Proxy test succeeded for ${EndpointSanitizer.sanitizeHost(host)}:$port"
+                                "Proxy test succeeded for ${proxyProtocol.name} ${EndpointSanitizer.sanitizeHost(host)}:$port"
                             )
                         } else {
                             VpnRuntimeState.setError(error)
@@ -347,7 +384,7 @@ private fun VpnHome() {
                         if (intent != null) {
                             permissionLauncher.launch(intent)
                         } else {
-                            AppVpnService.start(context, host, port)
+                            AppVpnService.start(context, host, port, proxyProtocol)
                         }
                     },
                     enabled = configIsValid && runtimeSnapshot.status != RuntimeStatus.Connecting,

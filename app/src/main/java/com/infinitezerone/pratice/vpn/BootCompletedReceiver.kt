@@ -19,6 +19,6 @@ class BootCompletedReceiver : BroadcastReceiver() {
 
         val config = settingsStore.loadConfigOrNull() ?: return
         VpnRuntimeState.appendLog("Boot auto-reconnect requested.")
-        AppVpnService.start(context, config.host, config.port)
+        AppVpnService.start(context, config.host, config.port, config.protocol)
     }
 }

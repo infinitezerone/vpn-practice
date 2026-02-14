@@ -16,6 +16,7 @@ import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.infinitezerone.pratice.R
+import com.infinitezerone.pratice.config.ProxyProtocol
 import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.config.RoutingMode
 import org.amnezia.awg.hevtunnel.TProxyService
@@ -34,8 +35,10 @@ class AppVpnService : VpnService() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var activeProxyHost: String? = null
     private var activeProxyPort: Int = -1
+    private var activeProxyProtocol: ProxyProtocol = ProxyProtocol.Socks5
     private var bridgeJob: Job? = null
     private var statsJob: Job? = null
+    private var httpBridge: HttpConnectSocksBridge? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startJob: Job? = null
     @Volatile
@@ -55,6 +58,9 @@ class AppVpnService : VpnService() {
 
         val host = intent?.getStringExtra(EXTRA_PROXY_HOST) ?: ""
         val port = intent?.getIntExtra(EXTRA_PROXY_PORT, -1) ?: -1
+        val protocol = intent?.getStringExtra(EXTRA_PROXY_PROTOCOL)
+            ?.let { raw -> ProxyProtocol.entries.firstOrNull { it.name == raw } }
+            ?: ProxyProtocol.Socks5
         if (host.isBlank() || port !in 1..65535) {
             startFailed = true
             VpnRuntimeState.setError("Failed to start VPN: invalid proxy settings.")
@@ -72,6 +78,7 @@ class AppVpnService : VpnService() {
         stopRequested = false
         activeProxyHost = host
         activeProxyPort = port
+        activeProxyProtocol = protocol
         startJob?.cancel()
         startJob = serviceScope.launch {
             VpnRuntimeState.setConnecting(host, port)
@@ -113,8 +120,10 @@ class AppVpnService : VpnService() {
         serviceScope.cancel()
         vpnInterface?.close()
         vpnInterface = null
+        stopHttpBridge()
         activeProxyHost = null
         activeProxyPort = -1
+        activeProxyProtocol = ProxyProtocol.Socks5
         stopForeground(STOP_FOREGROUND_REMOVE)
         val preserveErrorState = !stopRequested && VpnRuntimeState.state.value.status == RuntimeStatus.Error
         if (!stopAlreadyReported && !preserveErrorState) {
@@ -211,6 +220,7 @@ class AppVpnService : VpnService() {
         val settingsStore = ProxySettingsStore(this)
         val host = activeProxyHost
         val port = activeProxyPort
+        val protocol = activeProxyProtocol
         if (host.isNullOrBlank() || port !in 1..65535) {
             return false
         }
@@ -232,23 +242,25 @@ class AppVpnService : VpnService() {
             VpnRuntimeState.appendLog("IPv6 route unavailable. Continuing with IPv4 only.")
         }
 
-        try {
-            val proxyBypassList = settingsStore.loadProxyBypassList()
-            val proxyInfo = if (proxyBypassList.isEmpty()) {
-                ProxyInfo.buildDirectProxy(safeHost, port)
-            } else {
-                ProxyInfo.buildDirectProxy(safeHost, port, proxyBypassList)
+        if (protocol == ProxyProtocol.Http) {
+            try {
+                val proxyBypassList = settingsStore.loadProxyBypassList()
+                val proxyInfo = if (proxyBypassList.isEmpty()) {
+                    ProxyInfo.buildDirectProxy(safeHost, port)
+                } else {
+                    ProxyInfo.buildDirectProxy(safeHost, port, proxyBypassList)
+                }
+                builder.setHttpProxy(proxyInfo)
+                if (proxyBypassList.isEmpty()) {
+                    VpnRuntimeState.appendLog("HTTP proxy bridge enabled for $safeHost:$port")
+                } else {
+                    VpnRuntimeState.appendLog(
+                        "HTTP proxy bridge enabled for $safeHost:$port with ${proxyBypassList.size} bypass rules"
+                    )
+                }
+            } catch (_: Exception) {
+                VpnRuntimeState.appendLog("HTTP proxy bridge unavailable. Continuing without HTTP proxy.")
             }
-            builder.setHttpProxy(proxyInfo)
-            if (proxyBypassList.isEmpty()) {
-                VpnRuntimeState.appendLog("HTTP proxy bridge enabled for $safeHost:$port")
-            } else {
-                VpnRuntimeState.appendLog(
-                    "HTTP proxy bridge enabled for $safeHost:$port with ${proxyBypassList.size} bypass rules"
-                )
-            }
-        } catch (_: Exception) {
-            VpnRuntimeState.appendLog("HTTP proxy bridge unavailable. Continuing without HTTP proxy.")
         }
 
         val selectedPackages = settingsStore.loadBypassPackages()
@@ -276,11 +288,15 @@ class AppVpnService : VpnService() {
 
         vpnInterface = builder.establish()
         val tunnelFd = vpnInterface?.fd ?: return false
-        return startBridge(tunnelFd, safeHost, port)
+        val (bridgeHost, bridgePort, udpMode) = resolveTunnelProxyEndpoint(protocol, safeHost, port)
+        if (bridgePort !in 1..65535) {
+            return false
+        }
+        return startBridge(tunnelFd, bridgeHost, bridgePort, udpMode)
     }
 
-    private fun startBridge(tunnelFd: Int, host: String, port: Int): Boolean {
-        val configFile = writeHevTunnelConfig(host, port) ?: return false
+    private fun startBridge(tunnelFd: Int, host: String, port: Int, udpMode: String): Boolean {
+        val configFile = writeHevTunnelConfig(host, port, udpMode) ?: return false
 
         bridgeJob?.cancel()
         bridgeJob = serviceScope.launch {
@@ -349,8 +365,10 @@ class AppVpnService : VpnService() {
         statsJob?.cancel()
         vpnInterface?.close()
         vpnInterface = null
+        stopHttpBridge()
         activeProxyHost = null
         activeProxyPort = -1
+        activeProxyProtocol = ProxyProtocol.Socks5
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         stopBridgeAsync()
@@ -362,14 +380,14 @@ class AppVpnService : VpnService() {
         }
     }
 
-    private fun writeHevTunnelConfig(host: String, port: Int): File? {
+    private fun writeHevTunnelConfig(host: String, port: Int, udpMode: String): File? {
         return try {
             val configFile = File(filesDir, HEV_CONFIG_FILE)
             val config = """
                 socks5:
                   address: "$host"
                   port: $port
-                  udp: "udp"
+                  udp: "$udpMode"
                 tcp:
                   connect-timeout: 5000
                   idle-timeout: 600
@@ -411,6 +429,33 @@ class AppVpnService : VpnService() {
         return lastError
     }
 
+    private fun resolveTunnelProxyEndpoint(
+        protocol: ProxyProtocol,
+        upstreamHost: String,
+        upstreamPort: Int
+    ): Triple<String, Int, String> {
+        stopHttpBridge()
+        if (protocol == ProxyProtocol.Socks5) {
+            return Triple(upstreamHost, upstreamPort, "udp")
+        }
+
+        val bridge = HttpConnectSocksBridge(
+            upstreamHost = upstreamHost,
+            upstreamPort = upstreamPort,
+            protectSocket = { socket -> protect(socket) },
+            logger = { message -> VpnRuntimeState.appendLog(message) }
+        )
+        val localPort = bridge.start()
+        httpBridge = bridge
+        VpnRuntimeState.appendLog("HTTP upstream enabled via local SOCKS bridge on 127.0.0.1:$localPort")
+        return Triple("127.0.0.1", localPort, "tcp")
+    }
+
+    private fun stopHttpBridge() {
+        httpBridge?.stop()
+        httpBridge = null
+    }
+
     private fun buildNotification(host: String, port: Int): Notification =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Pratice VPN running")
@@ -439,14 +484,21 @@ class AppVpnService : VpnService() {
         private const val ACTION_STOP = "com.infinitezerone.pratice.vpn.action.STOP"
         private const val EXTRA_PROXY_HOST = "extra_proxy_host"
         private const val EXTRA_PROXY_PORT = "extra_proxy_port"
+        private const val EXTRA_PROXY_PROTOCOL = "extra_proxy_protocol"
         private const val CHANNEL_ID = "pratice_vpn_channel"
         private const val NOTIFICATION_ID = 1001
 
-        fun start(context: Context, host: String, port: Int) {
+        fun start(
+            context: Context,
+            host: String,
+            port: Int,
+            protocol: ProxyProtocol = ProxyProtocol.Socks5
+        ) {
             val intent = Intent(context, AppVpnService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_PROXY_HOST, host)
                 .putExtra(EXTRA_PROXY_PORT, port)
+                .putExtra(EXTRA_PROXY_PROTOCOL, protocol.name)
             try {
                 ContextCompat.startForegroundService(context, intent)
             } catch (e: Exception) {

@@ -4,12 +4,18 @@ import android.content.Context
 
 data class ProxyConfig(
     val host: String,
-    val port: Int
+    val port: Int,
+    val protocol: ProxyProtocol
 )
 
 enum class RoutingMode {
     Bypass,
     Allowlist
+}
+
+enum class ProxyProtocol {
+    Socks5,
+    Http
 }
 
 class ProxySettingsStore(context: Context) {
@@ -28,13 +34,24 @@ class ProxySettingsStore(context: Context) {
         if (ProxyConfigValidator.validate(host, portText) != null) {
             return null
         }
-        return ProxyConfig(host = host, port = portText.toInt())
+        return ProxyConfig(host = host, port = portText.toInt(), protocol = loadProxyProtocol())
     }
 
     fun save(host: String, port: Int) {
         prefs.edit()
             .putString(KEY_HOST, host.trim())
             .putInt(KEY_PORT, port)
+            .apply()
+    }
+
+    fun loadProxyProtocol(): ProxyProtocol {
+        val raw = prefs.getString(KEY_PROXY_PROTOCOL, ProxyProtocol.Socks5.name) ?: ProxyProtocol.Socks5.name
+        return ProxyProtocol.entries.firstOrNull { it.name == raw } ?: ProxyProtocol.Socks5
+    }
+
+    fun saveProxyProtocol(protocol: ProxyProtocol) {
+        prefs.edit()
+            .putString(KEY_PROXY_PROTOCOL, protocol.name)
             .apply()
     }
 
@@ -83,6 +100,7 @@ class ProxySettingsStore(context: Context) {
         const val KEY_PORT = "proxy_port"
         const val KEY_BYPASS_PACKAGES = "bypass_packages"
         const val KEY_ROUTING_MODE = "routing_mode"
+        const val KEY_PROXY_PROTOCOL = "proxy_protocol"
         const val KEY_AUTO_RECONNECT = "auto_reconnect"
         const val KEY_PROXY_BYPASS_LIST = "proxy_bypass_list"
     }
