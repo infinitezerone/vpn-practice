@@ -33,8 +33,6 @@ import kotlinx.coroutines.launch
 
 class AppVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var connectivityManager: ConnectivityManager? = null
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private val nonVpnNetworkTracker = NonVpnNetworkTracker()
     private var activeProxyHost: String? = null
     private var activeProxyPort: Int = -1
@@ -59,6 +57,69 @@ class AppVpnService : VpnService() {
             resolveAddress = { host, port -> resolveUpstreamProxyAddress(host, port) },
             bypassVpnForSocket = { socket -> bypassVpnForSocket(socket) },
             hasActiveTunnel = { vpnInterface != null }
+        )
+    }
+    private val networkWatcher by lazy {
+        NetworkAvailabilityWatcher(
+            connectivityManagerProvider = { getSystemService(ConnectivityManager::class.java) },
+            logger = { message -> VpnRuntimeState.appendLog(message) },
+            onRegistered = { manager ->
+                val initialNetwork = nonVpnNetworkTracker.initialize(manager)
+                updateUnderlyingNetworkHint(initialNetwork)
+            },
+            onAvailable = onAvailable@{ manager, network ->
+                if (stopRequested || isShuttingDown) {
+                    return@onAvailable
+                }
+                if (!nonVpnNetworkTracker.onAvailable(manager, network)) {
+                    return@onAvailable
+                }
+                updateUnderlyingNetworkHint(nonVpnNetworkTracker.currentNetwork())
+                if (vpnInterface == null) {
+                    return@onAvailable
+                }
+                val host = activeProxyHost ?: return@onAvailable
+                val port = activeProxyPort
+                if (port !in 1..65535) {
+                    return@onAvailable
+                }
+                serviceScope.launch {
+                    if (stopRequested || isShuttingDown) {
+                        return@launch
+                    }
+                    val wasRunning = VpnRuntimeState.state.value.status == RuntimeStatus.Running
+                    VpnRuntimeState.appendLog("Network available. Re-checking proxy connectivity.")
+                    if (!wasRunning) {
+                        VpnRuntimeState.setConnecting(host, port)
+                    }
+                    val proxyError = proxyProbeCoordinator.waitForProxyWithRetry(host, port, activeProxyProtocol)
+                    if (stopRequested || isShuttingDown) {
+                        return@launch
+                    }
+                    if (proxyError == null) {
+                        if (!wasRunning) {
+                            VpnRuntimeState.setRunning(host, port)
+                        } else {
+                            VpnRuntimeState.appendLog("Proxy re-check succeeded.")
+                        }
+                    } else {
+                        if (wasRunning) {
+                            VpnRuntimeState.appendLog("Proxy re-check failed: $proxyError")
+                        } else {
+                            VpnRuntimeState.setError(proxyError)
+                        }
+                    }
+                }
+            },
+            onLost = { manager, network ->
+                nonVpnNetworkTracker.onLost(manager, network)
+                updateUnderlyingNetworkHint(nonVpnNetworkTracker.currentNetwork())
+                VpnRuntimeState.appendLog("Network lost.")
+            },
+            onUnregistered = {
+                nonVpnNetworkTracker.clear()
+                updateUnderlyingNetworkHint(null)
+            }
         )
     }
     private val appTrafficMonitor by lazy {
@@ -167,83 +228,11 @@ class AppVpnService : VpnService() {
     }
 
     private fun registerNetworkCallback() {
-        if (networkCallback != null) {
-            return
-        }
-        connectivityManager = getSystemService(ConnectivityManager::class.java)
-        val initialNetwork = nonVpnNetworkTracker.initialize(connectivityManager)
-        updateUnderlyingNetworkHint(initialNetwork)
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                if (stopRequested || isShuttingDown) {
-                    return
-                }
-                if (!nonVpnNetworkTracker.onAvailable(connectivityManager, network)) {
-                    return
-                }
-                updateUnderlyingNetworkHint(nonVpnNetworkTracker.currentNetwork())
-                if (vpnInterface == null) {
-                    return
-                }
-                val host = activeProxyHost ?: return
-                val port = activeProxyPort
-                if (port !in 1..65535) {
-                    return
-                }
-                serviceScope.launch {
-                    if (stopRequested || isShuttingDown) {
-                        return@launch
-                    }
-                    val wasRunning = VpnRuntimeState.state.value.status == RuntimeStatus.Running
-                    VpnRuntimeState.appendLog("Network available. Re-checking proxy connectivity.")
-                    if (!wasRunning) {
-                        VpnRuntimeState.setConnecting(host, port)
-                    }
-                    val proxyError = proxyProbeCoordinator.waitForProxyWithRetry(host, port, activeProxyProtocol)
-                    if (stopRequested || isShuttingDown) {
-                        return@launch
-                    }
-                    if (proxyError == null) {
-                        if (!wasRunning) {
-                            VpnRuntimeState.setRunning(host, port)
-                        } else {
-                            VpnRuntimeState.appendLog("Proxy re-check succeeded.")
-                        }
-                    } else {
-                        if (wasRunning) {
-                            VpnRuntimeState.appendLog("Proxy re-check failed: $proxyError")
-                        } else {
-                            VpnRuntimeState.setError(proxyError)
-                        }
-                    }
-                }
-            }
-
-            override fun onLost(network: Network) {
-                nonVpnNetworkTracker.onLost(connectivityManager, network)
-                updateUnderlyingNetworkHint(nonVpnNetworkTracker.currentNetwork())
-                VpnRuntimeState.appendLog("Network lost.")
-            }
-        }
-        try {
-            connectivityManager?.registerDefaultNetworkCallback(callback)
-            networkCallback = callback
-        } catch (_: Exception) {
-            VpnRuntimeState.appendLog("Network callback unavailable on this device.")
-        }
+        networkWatcher.register()
     }
 
     private fun unregisterNetworkCallback() {
-        val callback = networkCallback ?: return
-        try {
-            connectivityManager?.unregisterNetworkCallback(callback)
-        } catch (_: Exception) {
-            // Callback already unregistered.
-        } finally {
-            networkCallback = null
-            nonVpnNetworkTracker.clear()
-            updateUnderlyingNetworkHint(null)
-        }
+        networkWatcher.unregister()
     }
 
     override fun onRevoke() {
