@@ -109,6 +109,7 @@ class HttpConnectSocksBridge(
                     return
                 }
                 upstream.connect(upstreamEndpoint, CONNECT_TIMEOUT_MS)
+                // Keep read timeout only during proxy handshake; clear before piping app traffic.
                 upstream.soTimeout = CONNECT_TIMEOUT_MS
                 logger(
                     "HTTP bridge conn#$connectionId upstream ${upstreamEndpoint.hostString}:${upstreamEndpoint.port} connected"
@@ -119,6 +120,7 @@ class HttpConnectSocksBridge(
                 if (isUpstreamPassthroughDestination(destination, upstreamEndpoint)) {
                     logger("HTTP bridge conn#$connectionId passthrough mode for direct proxy destination")
                     sendSocksSuccess(clientOutput)
+                    upstream.soTimeout = 0
                     pipeBidirectional(
                         connectionId = connectionId,
                         clientInput = clientInput,
@@ -146,6 +148,7 @@ class HttpConnectSocksBridge(
                     "HTTP bridge conn#$connectionId CONNECT ${destination.first}:${destination.second} accepted: ${connectResult.second}"
                 )
                 sendSocksSuccess(clientOutput)
+                upstream.soTimeout = 0
                 pipeBidirectional(
                     connectionId = connectionId,
                     clientInput = clientInput,
@@ -230,7 +233,8 @@ class HttpConnectSocksBridge(
                 return false
             }
             direct.connect(endpoint, CONNECT_TIMEOUT_MS)
-            direct.soTimeout = CONNECT_TIMEOUT_MS
+            // Direct fallback carries app payload; do not enforce short read timeout.
+            direct.soTimeout = 0
             logger(
                 "HTTP bridge conn#$connectionId direct fallback connected ${endpoint.hostString}:${endpoint.port}"
             )
