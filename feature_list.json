@@ -330,5 +330,47 @@
       "Verify VPN permission flow handling"
     ],
     "passes": true
+  },
+  {
+    "id": "F033",
+    "category": "configuration",
+    "description": "Proxy bypass host rules (Wi-Fi style 'Bypass proxy for') can be entered and saved.",
+    "steps": [
+      "Enter comma-separated bypass hosts",
+      "Save settings and restart app",
+      "Verify bypass rules persist"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F034",
+    "category": "ui",
+    "description": "Main screen exposes a bypass-proxy input matching Wi-Fi proxy UX intent.",
+    "steps": [
+      "Open main screen",
+      "Verify bypass input exists and accepts comma-separated hosts"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F035",
+    "category": "vpn-core",
+    "description": "VPN builder applies bypass host rules to ProxyInfo exclusions.",
+    "steps": [
+      "Configure bypass hosts",
+      "Start VPN",
+      "Verify service logs include applied bypass rule count"
+    ],
+    "passes": true
+  },
+  {
+    "id": "F036",
+    "category": "testing",
+    "description": "Unit tests cover bypass host parsing/normalization.",
+    "steps": [
+      "Run unit tests",
+      "Verify bypass parser tests pass"
+    ],
+    "passes": true
   }
 ]

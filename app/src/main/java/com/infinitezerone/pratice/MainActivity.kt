@@ -78,6 +78,7 @@ private data class InstalledApp(
 
 private const val TAG_PROXY_HOST_INPUT = "proxy_host_input"
 private const val TAG_PROXY_PORT_INPUT = "proxy_port_input"
+private const val TAG_PROXY_BYPASS_INPUT = "proxy_bypass_input"
 private const val TAG_START_BUTTON = "start_button"
 
 @Composable
@@ -88,6 +89,7 @@ private fun VpnHome() {
 
     var hostInput by rememberSaveable { mutableStateOf(settingsStore.loadHost()) }
     var portInput by rememberSaveable { mutableStateOf(settingsStore.loadPortText()) }
+    var proxyBypassRawInput by rememberSaveable { mutableStateOf(settingsStore.loadProxyBypassRawInput()) }
     var bypassPackages by remember { mutableStateOf(settingsStore.loadBypassPackages()) }
     var routingMode by remember { mutableStateOf(settingsStore.loadRoutingMode()) }
     var autoReconnect by remember { mutableStateOf(settingsStore.loadAutoReconnectEnabled()) }
@@ -100,6 +102,13 @@ private fun VpnHome() {
     val validationError = ProxyConfigValidator.validate(hostInput.trim(), portInput.trim())
     val configIsValid = validationError == null
 
+    fun persistBaseSettings(host: String, port: Int) {
+        settingsStore.save(host, port)
+        settingsStore.saveRoutingMode(routingMode)
+        settingsStore.saveAutoReconnectEnabled(autoReconnect)
+        settingsStore.saveProxyBypassRawInput(proxyBypassRawInput)
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -111,7 +120,7 @@ private fun VpnHome() {
                 return@rememberLauncherForActivityResult
             }
 
-            settingsStore.save(host, port)
+            persistBaseSettings(host, port)
             AppVpnService.start(context, host, port)
             infoMessage = null
         } else {
@@ -150,6 +159,16 @@ private fun VpnHome() {
             modifier = Modifier
                 .fillMaxWidth()
                 .testTag(TAG_PROXY_PORT_INPUT)
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        OutlinedTextField(
+            value = proxyBypassRawInput,
+            onValueChange = { proxyBypassRawInput = it },
+            label = { Text("Bypass proxy for (comma-separated)") },
+            singleLine = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag(TAG_PROXY_BYPASS_INPUT)
         )
         validationError?.let {
             Spacer(modifier = Modifier.height(8.dp))
@@ -264,9 +283,7 @@ private fun VpnHome() {
                 onClick = {
                     val host = hostInput.trim()
                     val port = portInput.trim().toIntOrNull() ?: return@Button
-                    settingsStore.save(host, port)
-                    settingsStore.saveRoutingMode(routingMode)
-                    settingsStore.saveAutoReconnectEnabled(autoReconnect)
+                    persistBaseSettings(host, port)
                     infoMessage = "Proxy settings saved."
                 },
                 enabled = configIsValid
@@ -277,9 +294,7 @@ private fun VpnHome() {
                 onClick = {
                     val host = hostInput.trim()
                     val port = portInput.trim().toIntOrNull() ?: return@Button
-                    settingsStore.save(host, port)
-                    settingsStore.saveRoutingMode(routingMode)
-                    settingsStore.saveAutoReconnectEnabled(autoReconnect)
+                    persistBaseSettings(host, port)
                     uiScope.launch {
                         isTestingConnection = true
                         val error = withContext(Dispatchers.IO) {
@@ -326,9 +341,7 @@ private fun VpnHome() {
                             return@Button
                         }
 
-                        settingsStore.save(host, port)
-                        settingsStore.saveRoutingMode(routingMode)
-                        settingsStore.saveAutoReconnectEnabled(autoReconnect)
+                        persistBaseSettings(host, port)
                         infoMessage = null
                         val intent: Intent? = VpnService.prepare(context)
                         if (intent != null) {

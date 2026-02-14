@@ -193,8 +193,20 @@ class AppVpnService : VpnService() {
         }
 
         try {
-            builder.setHttpProxy(ProxyInfo.buildDirectProxy(safeHost, port))
-            VpnRuntimeState.appendLog("HTTP proxy bridge enabled for $safeHost:$port")
+            val proxyBypassList = settingsStore.loadProxyBypassList()
+            val proxyInfo = if (proxyBypassList.isEmpty()) {
+                ProxyInfo.buildDirectProxy(safeHost, port)
+            } else {
+                ProxyInfo.buildDirectProxy(safeHost, port, proxyBypassList)
+            }
+            builder.setHttpProxy(proxyInfo)
+            if (proxyBypassList.isEmpty()) {
+                VpnRuntimeState.appendLog("HTTP proxy bridge enabled for $safeHost:$port")
+            } else {
+                VpnRuntimeState.appendLog(
+                    "HTTP proxy bridge enabled for $safeHost:$port with ${proxyBypassList.size} bypass rules"
+                )
+            }
         } catch (_: Exception) {
             VpnRuntimeState.appendLog("HTTP proxy bridge unavailable. Continuing without HTTP proxy.")
         }
