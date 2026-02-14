@@ -251,6 +251,7 @@ class AppVpnService : VpnService() {
         val host = activeProxyHost
         val port = activeProxyPort
         val protocol = activeProxyProtocol
+        val proxyBypassRules = settingsStore.loadProxyBypassList()
         if (host.isNullOrBlank() || port !in 1..65535) {
             return false
         }
@@ -280,18 +281,17 @@ class AppVpnService : VpnService() {
 
         if (protocol == ProxyProtocol.Http) {
             try {
-                val proxyBypassList = settingsStore.loadProxyBypassList()
-                val proxyInfo = if (proxyBypassList.isEmpty()) {
+                val proxyInfo = if (proxyBypassRules.isEmpty()) {
                     ProxyInfo.buildDirectProxy(safeHost, port)
                 } else {
-                    ProxyInfo.buildDirectProxy(safeHost, port, proxyBypassList)
+                    ProxyInfo.buildDirectProxy(safeHost, port, proxyBypassRules)
                 }
                 builder.setHttpProxy(proxyInfo)
-                if (proxyBypassList.isEmpty()) {
+                if (proxyBypassRules.isEmpty()) {
                     VpnRuntimeState.appendLog("HTTP proxy bridge enabled for $safeHost:$port")
                 } else {
                     VpnRuntimeState.appendLog(
-                        "HTTP proxy bridge enabled for $safeHost:$port with ${proxyBypassList.size} bypass rules"
+                        "HTTP proxy bridge enabled for $safeHost:$port with ${proxyBypassRules.size} bypass rules"
                     )
                 }
             } catch (_: Exception) {
@@ -325,7 +325,12 @@ class AppVpnService : VpnService() {
         vpnInterface = builder.establish()
         val tunnelFd = vpnInterface?.fd ?: return false
         configurePerAppTrafficMonitor(routingMode, selectedPackages)
-        val (bridgeHost, bridgePort, udpMode) = resolveTunnelProxyEndpoint(protocol, safeHost, port)
+        val (bridgeHost, bridgePort, udpMode) = resolveTunnelProxyEndpoint(
+            protocol = protocol,
+            upstreamHost = safeHost,
+            upstreamPort = port,
+            proxyBypassRules = proxyBypassRules
+        )
         if (bridgePort !in 1..65535) {
             return false
         }
@@ -515,7 +520,8 @@ class AppVpnService : VpnService() {
     private fun resolveTunnelProxyEndpoint(
         protocol: ProxyProtocol,
         upstreamHost: String,
-        upstreamPort: Int
+        upstreamPort: Int,
+        proxyBypassRules: List<String>
     ): Triple<String, Int, String> {
         stopHttpBridge()
         if (protocol == ProxyProtocol.Socks5) {
@@ -530,6 +536,9 @@ class AppVpnService : VpnService() {
             },
             destinationEndpointProvider = { host, port ->
                 resolveUpstreamProxyAddress(host, port)
+            },
+            proxyBypassRuleMatcher = { destinationHost, _ ->
+                matchingBypassRule(destinationHost, proxyBypassRules)
             },
             bypassVpnForSocket = { socket -> bypassVpnForSocket(socket) },
             allowDirectFallbackForNonHttpPorts = true,
@@ -560,6 +569,44 @@ class AppVpnService : VpnService() {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun matchingBypassRule(destinationHost: String, bypassRules: List<String>): String? {
+        if (bypassRules.isEmpty()) {
+            return null
+        }
+        val host = destinationHost.trim().trimEnd('.').lowercase()
+        if (host.isBlank()) {
+            return null
+        }
+        return bypassRules.firstOrNull { rawRule ->
+            val rule = rawRule.trim().trimEnd('.').lowercase()
+            if (rule.isBlank()) {
+                return@firstOrNull false
+            }
+            when {
+                rule == "<local>" -> !host.contains('.')
+                rule.startsWith("*.") -> {
+                    val suffix = rule.removePrefix("*.")
+                    host == suffix || host.endsWith(".$suffix")
+                }
+                rule.startsWith(".") -> {
+                    val suffix = rule.removePrefix(".")
+                    host == suffix || host.endsWith(".$suffix")
+                }
+                rule.contains('*') -> wildcardMatch(host, rule)
+                else -> host == rule
+            }
+        }
+    }
+
+    private fun wildcardMatch(host: String, wildcardRule: String): Boolean {
+        val regex = wildcardRule
+            .split("*")
+            .joinToString(separator = ".*") { part -> Regex.escape(part) }
+            .let { "^$it$" }
+            .toRegex(RegexOption.IGNORE_CASE)
+        return regex.matches(host)
     }
 
     private fun bypassVpnForSocket(socket: Socket): Boolean {

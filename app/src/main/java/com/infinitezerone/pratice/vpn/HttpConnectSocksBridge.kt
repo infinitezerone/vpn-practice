@@ -21,6 +21,7 @@ class HttpConnectSocksBridge(
     private val upstreamPort: Int,
     private val upstreamEndpointProvider: () -> InetSocketAddress?,
     private val destinationEndpointProvider: (String, Int) -> InetSocketAddress?,
+    private val proxyBypassRuleMatcher: (String, Int) -> String?,
     private val bypassVpnForSocket: (Socket) -> Boolean,
     private val allowDirectFallbackForNonHttpPorts: Boolean,
     private val logger: (String) -> Unit
@@ -90,8 +91,33 @@ class HttpConnectSocksBridge(
                 logger("HTTP bridge conn#$connectionId rejected: mapped DNS over TLS is not supported")
                 return
             }
+            val bypassRule = proxyBypassRuleMatcher(destination.first, destination.second)
+            if (bypassRule != null) {
+                if (startDirectPassthrough(
+                        connectionId = connectionId,
+                        destination = destination,
+                        reason = "bypass rule \"$bypassRule\"",
+                        clientInput = clientInput,
+                        clientOutput = clientOutput,
+                        socksClient = socksClient
+                    )
+                ) {
+                    return
+                }
+                sendSocksFailure(clientOutput, REP_HOST_UNREACHABLE)
+                logger("HTTP bridge conn#$connectionId bypass required but direct connect failed")
+                return
+            }
             if (allowDirectFallbackForNonHttpPorts && !isLikelyHttpPort(destination.second)) {
-                if (startDirectPassthrough(connectionId, destination, clientInput, clientOutput, socksClient)) {
+                if (startDirectPassthrough(
+                        connectionId = connectionId,
+                        destination = destination,
+                        reason = "non-http port fallback",
+                        clientInput = clientInput,
+                        clientOutput = clientOutput,
+                        socksClient = socksClient
+                    )
+                ) {
                     return
                 }
             }
@@ -217,6 +243,7 @@ class HttpConnectSocksBridge(
     private fun startDirectPassthrough(
         connectionId: Long,
         destination: Pair<String, Int>,
+        reason: String,
         clientInput: BufferedInputStream,
         clientOutput: BufferedOutputStream,
         socksClient: Socket
@@ -236,7 +263,7 @@ class HttpConnectSocksBridge(
             // Direct fallback carries app payload; do not enforce short read timeout.
             direct.soTimeout = 0
             logger(
-                "HTTP bridge conn#$connectionId direct fallback connected ${endpoint.hostString}:${endpoint.port}"
+                "HTTP bridge conn#$connectionId direct fallback connected ${endpoint.hostString}:${endpoint.port} ($reason)"
             )
             val upstreamInput = BufferedInputStream(direct.getInputStream())
             val upstreamOutput = BufferedOutputStream(direct.getOutputStream())
