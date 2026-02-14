@@ -244,7 +244,8 @@ class AppVpnService : VpnService() {
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun startVpnTunnel(): Boolean {
         if (vpnInterface != null) {
-            return true
+            VpnRuntimeState.appendLog("Reconfiguring active VPN tunnel with latest settings.")
+            resetActiveTunnelStateForRestart()
         }
 
         val settingsStore = ProxySettingsStore(this)
@@ -335,6 +336,21 @@ class AppVpnService : VpnService() {
             return false
         }
         return startBridge(tunnelFd, bridgeHost, bridgePort, udpMode, protocol == ProxyProtocol.Http)
+    }
+
+    private fun resetActiveTunnelStateForRestart() {
+        bridgeJob?.cancel()
+        bridgeJob = null
+        statsJob?.cancel()
+        statsJob = null
+        appTrafficJob?.cancel()
+        appTrafficJob = null
+        stopHttpBridge()
+        stopBridge()
+        vpnInterface?.close()
+        vpnInterface = null
+        monitoredUidToLabel.clear()
+        lastUidTraffic.clear()
     }
 
     private fun startBridge(
