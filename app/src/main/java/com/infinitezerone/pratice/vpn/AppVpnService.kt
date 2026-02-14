@@ -43,8 +43,15 @@ class AppVpnService : VpnService() {
     private var stopAlreadyReported = false
     @Volatile
     private var isShuttingDown = false
+    @Volatile
+    private var stopRequested = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            handleStopRequest("VPN stopped.")
+            return START_NOT_STICKY
+        }
+
         val host = intent?.getStringExtra(EXTRA_PROXY_HOST) ?: ""
         val port = intent?.getIntExtra(EXTRA_PROXY_PORT, -1) ?: -1
         if (host.isBlank() || port !in 1..65535) {
@@ -61,12 +68,16 @@ class AppVpnService : VpnService() {
         startFailed = false
         stopAlreadyReported = false
         isShuttingDown = false
+        stopRequested = false
         activeProxyHost = host
         activeProxyPort = port
         startJob?.cancel()
         startJob = serviceScope.launch {
             VpnRuntimeState.setConnecting(host, port)
             val proxyError = waitForProxyWithRetry(host, port)
+            if (stopRequested || isShuttingDown) {
+                return@launch
+            }
             if (proxyError != null) {
                 startFailed = true
                 VpnRuntimeState.setError(proxyError)
@@ -81,10 +92,12 @@ class AppVpnService : VpnService() {
                 return@launch
             }
 
-            VpnRuntimeState.setRunning(host, port)
+            if (!stopRequested && !isShuttingDown) {
+                VpnRuntimeState.setRunning(host, port)
+            }
         }
 
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -100,7 +113,8 @@ class AppVpnService : VpnService() {
         activeProxyHost = null
         activeProxyPort = -1
         stopForeground(STOP_FOREGROUND_REMOVE)
-        if (!startFailed && !stopAlreadyReported) {
+        val preserveErrorState = !stopRequested && VpnRuntimeState.state.value.status == RuntimeStatus.Error
+        if (!stopAlreadyReported && !preserveErrorState) {
             VpnRuntimeState.setStopped("VPN stopped.")
         }
         super.onDestroy()
@@ -113,6 +127,9 @@ class AppVpnService : VpnService() {
         connectivityManager = getSystemService(ConnectivityManager::class.java)
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                if (stopRequested || isShuttingDown) {
+                    return
+                }
                 if (vpnInterface == null) {
                     return
                 }
@@ -122,9 +139,15 @@ class AppVpnService : VpnService() {
                     return
                 }
                 serviceScope.launch {
+                    if (stopRequested || isShuttingDown) {
+                        return@launch
+                    }
                     VpnRuntimeState.appendLog("Network available. Re-checking proxy connectivity.")
                     VpnRuntimeState.setConnecting(host, port)
                     val proxyError = waitForProxyWithRetry(host, port)
+                    if (stopRequested || isShuttingDown) {
+                        return@launch
+                    }
                     if (proxyError == null) {
                         VpnRuntimeState.setRunning(host, port)
                     } else {
@@ -157,9 +180,7 @@ class AppVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        stopAlreadyReported = true
-        VpnRuntimeState.setStopped("VPN permission revoked by system.")
-        stopSelf()
+        handleStopRequest("VPN permission revoked by system.")
         super.onRevoke()
     }
 
@@ -247,13 +268,13 @@ class AppVpnService : VpnService() {
             try {
                 VpnRuntimeState.appendLog("Starting tun2socks bridge.")
                 TProxyService.TProxyStartService(configFile.absolutePath, tunnelFd)
-                if (!isShuttingDown) {
+                if (!isShuttingDown && !stopRequested) {
                     startFailed = true
                     VpnRuntimeState.setError("tun2socks bridge stopped unexpectedly.")
                     stopSelf()
                 }
             } catch (e: Throwable) {
-                if (!isShuttingDown) {
+                if (!isShuttingDown && !stopRequested) {
                     startFailed = true
                     VpnRuntimeState.setError("tun2socks bridge failed (${e.javaClass.simpleName}).")
                     stopSelf()
@@ -277,7 +298,7 @@ class AppVpnService : VpnService() {
         statsJob?.cancel()
         statsJob = serviceScope.launch {
             var lastSnapshot: String? = null
-            while (!isShuttingDown) {
+            while (!isShuttingDown && !stopRequested) {
                 try {
                     val stats = TProxyService.TProxyGetStats()
                     if (stats != null && stats.isNotEmpty()) {
@@ -293,6 +314,23 @@ class AppVpnService : VpnService() {
                 delay(2_000)
             }
         }
+    }
+
+    private fun handleStopRequest(reason: String) {
+        stopRequested = true
+        isShuttingDown = true
+        stopAlreadyReported = true
+        unregisterNetworkCallback()
+        startJob?.cancel()
+        bridgeJob?.cancel()
+        statsJob?.cancel()
+        stopBridge()
+        vpnInterface?.close()
+        vpnInterface = null
+        activeProxyHost = null
+        activeProxyPort = -1
+        VpnRuntimeState.setStopped(reason)
+        stopSelf()
     }
 
     private fun writeHevTunnelConfig(host: String, port: Int): File? {
@@ -363,6 +401,8 @@ class AppVpnService : VpnService() {
 
     companion object {
         private const val HEV_CONFIG_FILE = "hev-socks5.yaml"
+        private const val ACTION_START = "com.infinitezerone.pratice.vpn.action.START"
+        private const val ACTION_STOP = "com.infinitezerone.pratice.vpn.action.STOP"
         private const val EXTRA_PROXY_HOST = "extra_proxy_host"
         private const val EXTRA_PROXY_PORT = "extra_proxy_port"
         private const val CHANNEL_ID = "pratice_vpn_channel"
@@ -370,6 +410,7 @@ class AppVpnService : VpnService() {
 
         fun start(context: Context, host: String, port: Int) {
             val intent = Intent(context, AppVpnService::class.java)
+                .setAction(ACTION_START)
                 .putExtra(EXTRA_PROXY_HOST, host)
                 .putExtra(EXTRA_PROXY_PORT, port)
             try {
@@ -380,8 +421,12 @@ class AppVpnService : VpnService() {
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, AppVpnService::class.java)
-            context.stopService(intent)
+            val stopIntent = Intent(context, AppVpnService::class.java).setAction(ACTION_STOP)
+            try {
+                context.startService(stopIntent)
+            } catch (_: Exception) {
+                context.stopService(Intent(context, AppVpnService::class.java))
+            }
         }
     }
 }
