@@ -58,6 +58,7 @@ import com.infinitezerone.pratice.config.HttpTrafficMode
 import com.infinitezerone.pratice.config.ProxyProtocol
 import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.config.RoutingMode
+import com.infinitezerone.pratice.discovery.LanProxyScanner
 import com.infinitezerone.pratice.vpn.AppVpnService
 import com.infinitezerone.pratice.vpn.EndpointSanitizer
 import com.infinitezerone.pratice.vpn.ProxyConnectivityChecker
@@ -97,6 +98,7 @@ private fun VpnHome() {
     val context = LocalContext.current
     val settingsStore = remember(context) { ProxySettingsStore(context) }
     val installedApps = remember(context) { loadInstalledApps(context) }
+    val lanProxyScanner = remember { LanProxyScanner() }
 
     var hostInput by rememberSaveable { mutableStateOf(settingsStore.loadHost()) }
     var portInput by rememberSaveable { mutableStateOf(settingsStore.loadPortText()) }
@@ -109,6 +111,7 @@ private fun VpnHome() {
     var showBypassDialog by remember { mutableStateOf(false) }
     var infoMessage by remember { mutableStateOf<String?>(null) }
     var isTestingConnection by remember { mutableStateOf(false) }
+    var isScanningLan by remember { mutableStateOf(false) }
     val runtimeSnapshot by VpnRuntimeState.state.collectAsState()
     val uiScope = rememberCoroutineScope()
 
@@ -400,6 +403,63 @@ private fun VpnHome() {
                             )
                         } else {
                             Text("Test Connection")
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            uiScope.launch {
+                                isScanningLan = true
+                                val portsText = LanProxyScanner.DEFAULT_SCAN_PORTS.joinToString(",")
+                                infoMessage = "Scanning LAN ports $portsText ..."
+                                VpnRuntimeState.appendLog("LAN scan started on ports $portsText")
+                                val discovered = withContext(Dispatchers.IO) {
+                                    lanProxyScanner.discover(context)
+                                }
+                                isScanningLan = false
+                                if (discovered == null) {
+                                    infoMessage = "No LAN proxy found on ${LanProxyScanner.DEFAULT_SCAN_PORTS.joinToString(", ")}."
+                                    VpnRuntimeState.appendLog("LAN scan finished: no proxy found")
+                                    return@launch
+                                }
+
+                                hostInput = discovered.host
+                                portInput = discovered.port.toString()
+                                proxyProtocol = discovered.protocol
+                                settingsStore.saveProxyProtocol(discovered.protocol)
+                                persistBaseSettings(discovered.host, discovered.port)
+
+                                val endpointSummary = "${discovered.protocol.name} ${discovered.host}:${discovered.port}"
+                                infoMessage = "Found $endpointSummary. Connecting..."
+                                VpnRuntimeState.appendLog(
+                                    "LAN scan found proxy from ${discovered.localIp}: $endpointSummary"
+                                )
+
+                                val intent = VpnService.prepare(context)
+                                if (intent != null) {
+                                    permissionLauncher.launch(intent)
+                                } else {
+                                    AppVpnService.start(
+                                        context,
+                                        discovered.host,
+                                        discovered.port,
+                                        discovered.protocol
+                                    )
+                                }
+                            }
+                        },
+                        enabled = !isScanningLan &&
+                            !isTestingConnection &&
+                            runtimeSnapshot.status != RuntimeStatus.Connecting,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isScanningLan) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Scan LAN & Auto Connect")
                         }
                     }
                     Spacer(modifier = Modifier.height(8.dp))
