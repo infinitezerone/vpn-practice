@@ -462,25 +462,23 @@ class AppVpnService : VpnService() {
     ): File? {
         return try {
             val configFile = File(filesDir, HEV_CONFIG_FILE)
-            val config = buildString {
-                appendLine("socks5:")
-                appendLine("  address: \"$host\"")
-                appendLine("  port: $port")
-                appendLine("  udp: \"$udpMode\"")
-                if (enableMappedDns) {
-                    appendLine("mapdns:")
-                    appendLine("  address: \"$MAP_DNS_ADDRESS\"")
-                    appendLine("  port: $MAP_DNS_PORT")
-                    appendLine("  network: \"$MAP_DNS_NETWORK\"")
-                    appendLine("  netmask: \"$MAP_DNS_NETMASK\"")
-                    appendLine("  cache-size: $MAP_DNS_CACHE_SIZE")
-                }
-                appendLine("tcp:")
-                appendLine("  connect-timeout: 5000")
-                appendLine("  idle-timeout: 600")
-                appendLine("misc:")
-                appendLine("  task-stack-size: 24576")
+            val mapDnsConfig = if (enableMappedDns) {
+                MapDnsConfig(
+                    address = MAP_DNS_ADDRESS,
+                    port = MAP_DNS_PORT,
+                    network = MAP_DNS_NETWORK,
+                    netmask = MAP_DNS_NETMASK,
+                    cacheSize = MAP_DNS_CACHE_SIZE
+                )
+            } else {
+                null
             }
+            val config = HevTunnelConfigBuilder.build(
+                host = host,
+                port = port,
+                udpMode = udpMode,
+                mapDnsConfig = mapDnsConfig
+            )
             configFile.writeText(config.trimEnd())
             configFile
         } catch (_: Exception) {
@@ -559,7 +557,7 @@ class AppVpnService : VpnService() {
                 resolveUpstreamProxyAddress(host, port)
             },
             proxyBypassRuleMatcher = { destinationHost, _ ->
-                matchingBypassRule(destinationHost, proxyBypassRules)
+                HttpBypassRuleMatcher.findMatchingRule(destinationHost, proxyBypassRules)
             },
             bypassVpnForSocket = { socket -> bypassVpnForSocket(socket) },
             allowDirectFallbackForNonHttpPorts = allowDirectFallbackForNonHttpPorts,
@@ -590,44 +588,6 @@ class AppVpnService : VpnService() {
         } catch (_: Exception) {
             null
         }
-    }
-
-    private fun matchingBypassRule(destinationHost: String, bypassRules: List<String>): String? {
-        if (bypassRules.isEmpty()) {
-            return null
-        }
-        val host = destinationHost.trim().trimEnd('.').lowercase()
-        if (host.isBlank()) {
-            return null
-        }
-        return bypassRules.firstOrNull { rawRule ->
-            val rule = rawRule.trim().trimEnd('.').lowercase()
-            if (rule.isBlank()) {
-                return@firstOrNull false
-            }
-            when {
-                rule == "<local>" -> !host.contains('.')
-                rule.startsWith("*.") -> {
-                    val suffix = rule.removePrefix("*.")
-                    host == suffix || host.endsWith(".$suffix")
-                }
-                rule.startsWith(".") -> {
-                    val suffix = rule.removePrefix(".")
-                    host == suffix || host.endsWith(".$suffix")
-                }
-                rule.contains('*') -> wildcardMatch(host, rule)
-                else -> host == rule
-            }
-        }
-    }
-
-    private fun wildcardMatch(host: String, wildcardRule: String): Boolean {
-        val regex = wildcardRule
-            .split("*")
-            .joinToString(separator = ".*") { part -> Regex.escape(part) }
-            .let { "^$it$" }
-            .toRegex(RegexOption.IGNORE_CASE)
-        return regex.matches(host)
     }
 
     private fun bypassVpnForSocket(socket: Socket): Boolean {
