@@ -37,7 +37,9 @@ class LanProxyScanner(
         parallelism: Int = DEFAULT_PARALLELISM
     ): DiscoveredProxy? {
         val localIp = localIpv4Provider(context) ?: return null
-        val hosts = buildScanHosts(localIp).filterNot { it == localIp }
+        val hosts = (buildPriorityHosts(localIp) + buildScanHosts(localIp))
+            .distinct()
+            .filterNot { it == localIp }
         val ports = scanPorts
             .filter { it in 1..65535 }
             .distinct()
@@ -78,8 +80,8 @@ class LanProxyScanner(
 
     companion object {
         val DEFAULT_SCAN_PORTS = listOf(7890, 7891, 8888)
-        private const val DEFAULT_TIMEOUT_MS = 400
-        private const val DEFAULT_PARALLELISM = 64
+        private const val DEFAULT_TIMEOUT_MS = 800
+        private const val DEFAULT_PARALLELISM = 48
 
         fun buildScanHosts(localIpv4: String): List<String> {
             val octets = localIpv4.split('.')
@@ -91,6 +93,27 @@ class LanProxyScanner(
             }
             val prefix = octets.take(3).joinToString(".")
             return (1..254).map { last -> "$prefix.$last" }
+        }
+
+        fun buildPriorityHosts(localIpv4: String): List<String> {
+            val octets = localIpv4.split('.').mapNotNull { it.toIntOrNull() }
+            if (octets.size != 4 || octets.any { it !in 0..255 }) {
+                return emptyList()
+            }
+            val prefix = "${octets[0]}.${octets[1]}.${octets[2]}"
+            val candidates = mutableListOf<String>()
+            // Common LAN gateway endpoints.
+            candidates += "$prefix.1"
+            candidates += "$prefix.2"
+            candidates += "$prefix.254"
+            // Android emulator host mappings.
+            if (octets[0] == 10 && octets[1] == 0 && octets[2] == 2) {
+                candidates += "10.0.2.2"
+            }
+            if (octets[0] == 10 && octets[1] == 0 && octets[2] == 3) {
+                candidates += "10.0.3.2"
+            }
+            return candidates.distinct().filterNot { it == localIpv4 }
         }
 
         private suspend fun detectProxyProtocol(

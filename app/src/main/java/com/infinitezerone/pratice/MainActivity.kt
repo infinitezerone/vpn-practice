@@ -418,8 +418,10 @@ private fun VpnHome() {
                                 }
                                 isScanningLan = false
                                 if (discovered == null) {
-                                    infoMessage = "No LAN proxy found on ${LanProxyScanner.DEFAULT_SCAN_PORTS.joinToString(", ")}."
-                                    VpnRuntimeState.appendLog("LAN scan finished: no proxy found")
+                                    infoMessage = "No LAN proxy found. Ensure Clash/mitmproxy is listening on LAN (allow-lan)."
+                                    VpnRuntimeState.appendLog(
+                                        "LAN scan finished: no proxy found on ports ${LanProxyScanner.DEFAULT_SCAN_PORTS.joinToString(",")}."
+                                    )
                                     return@launch
                                 }
 

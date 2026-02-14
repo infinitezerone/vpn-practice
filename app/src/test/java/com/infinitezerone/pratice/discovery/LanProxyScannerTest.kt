@@ -21,6 +21,15 @@ class LanProxyScannerTest {
     }
 
     @Test
+    fun buildPriorityHostsIncludesGatewayAndEmulatorHost() {
+        val hosts = LanProxyScanner.buildPriorityHosts("10.0.2.15")
+
+        assertTrue(hosts.contains("10.0.2.1"))
+        assertTrue(hosts.contains("10.0.2.2"))
+        assertTrue(hosts.contains("10.0.2.254"))
+    }
+
+    @Test
     fun discoverReturnsFirstDetectedProxy() = runBlocking {
         val probeCalls = AtomicInteger(0)
         val scanner = LanProxyScanner(
