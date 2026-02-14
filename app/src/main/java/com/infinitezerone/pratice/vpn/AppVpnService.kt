@@ -516,14 +516,24 @@ class AppVpnService : VpnService() {
     private fun startPerAppTrafficMonitor() {
         appTrafficJob?.cancel()
         appTrafficJob = serviceScope.launch {
+            var supportedUidCount = 0
             monitoredUidToLabel.keys.forEach { uid ->
                 val rx = TrafficStats.getUidRxBytes(uid)
                 val tx = TrafficStats.getUidTxBytes(uid)
                 if (rx >= 0L && tx >= 0L) {
+                    supportedUidCount += 1
                     lastUidTraffic[uid] = rx to tx
                 }
             }
 
+            if (supportedUidCount == 0) {
+                VpnRuntimeState.appendLog(
+                    "App traffic monitor unavailable: UID byte counters are not exposed on this device build."
+                )
+                return@launch
+            }
+
+            var idleIntervals = 0
             while (!isShuttingDown && !stopRequested) {
                 delay(4_000)
                 val deltas = mutableListOf<Pair<String, Long>>()
@@ -549,11 +559,19 @@ class AppVpnService : VpnService() {
                 }
 
                 if (deltas.isNotEmpty()) {
+                    idleIntervals = 0
                     val top = deltas
                         .sortedByDescending { it.second }
                         .take(4)
                         .joinToString(separator = " | ") { it.first }
                     VpnRuntimeState.appendLog("VPN app traffic: $top")
+                } else {
+                    idleIntervals += 1
+                    if (idleIntervals % 6 == 0) {
+                        VpnRuntimeState.appendLog(
+                            "VPN app traffic: no monitored app data in the last ${idleIntervals * 4}s."
+                        )
+                    }
                 }
             }
         }
