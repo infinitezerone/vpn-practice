@@ -31,7 +31,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class AppVpnService : VpnService() {
@@ -55,6 +54,14 @@ class AppVpnService : VpnService() {
                 VpnRuntimeState.setError("tun2socks bridge failed (${error.javaClass.simpleName}).")
                 stopSelf()
             }
+        )
+    }
+    private val proxyProbeCoordinator by lazy {
+        ProxyProbeCoordinator(
+            logger = { message -> VpnRuntimeState.appendLog(message) },
+            resolveAddress = { host, port -> resolveUpstreamProxyAddress(host, port) },
+            bypassVpnForSocket = { socket -> bypassVpnForSocket(socket) },
+            hasActiveTunnel = { vpnInterface != null }
         )
     }
     private val appTrafficMonitor by lazy {
@@ -111,7 +118,7 @@ class AppVpnService : VpnService() {
         startJob = serviceScope.launch {
             VpnRuntimeState.appendLog("Proxy protocol: ${protocol.name}")
             VpnRuntimeState.setConnecting(host, port)
-            val proxyError = waitForProxyWithRetry(host, port, protocol)
+            val proxyError = proxyProbeCoordinator.waitForProxyWithRetry(host, port, protocol)
             if (stopRequested || isShuttingDown) {
                 return@launch
             }
@@ -198,7 +205,7 @@ class AppVpnService : VpnService() {
                     if (!wasRunning) {
                         VpnRuntimeState.setConnecting(host, port)
                     }
-                    val proxyError = waitForProxyWithRetry(host, port, activeProxyProtocol)
+                    val proxyError = proxyProbeCoordinator.waitForProxyWithRetry(host, port, activeProxyProtocol)
                     if (stopRequested || isShuttingDown) {
                         return@launch
                     }
@@ -424,55 +431,6 @@ class AppVpnService : VpnService() {
         } catch (_: Exception) {
             null
         }
-    }
-
-    private suspend fun waitForProxyWithRetry(
-        host: String,
-        port: Int,
-        protocol: ProxyProtocol
-    ): String? {
-        val maxAttempts = 3
-        var backoffMs = 1_000L
-        var lastError: String? = null
-
-        for (attempt in 1..maxAttempts) {
-            VpnRuntimeState.appendLog("Proxy connectivity check $attempt/$maxAttempts")
-            val protector = if (vpnInterface != null) {
-                { socket: Socket -> bypassVpnForSocket(socket) }
-            } else {
-                null
-            }
-            val connectAddress = resolveUpstreamProxyAddress(host, port)
-            if (connectAddress == null) {
-                lastError = "Cannot resolve proxy ${EndpointSanitizer.sanitizeHost(host)}:$port."
-                if (attempt < maxAttempts) {
-                    VpnRuntimeState.appendLog("Proxy DNS resolution failed, retrying in ${backoffMs / 1000}s")
-                    delay(backoffMs)
-                    backoffMs *= 2
-                    continue
-                }
-                break
-            }
-            val error = ProxyConnectivityChecker.testConnection(
-                host = host,
-                port = port,
-                protocol = protocol,
-                protectSocket = protector,
-                connectAddress = connectAddress
-            )
-            if (error == null) {
-                return null
-            }
-            lastError = error
-
-            if (attempt < maxAttempts) {
-                VpnRuntimeState.appendLog("Proxy unreachable, retrying in ${backoffMs / 1000}s")
-                delay(backoffMs)
-                backoffMs *= 2
-            }
-        }
-
-        return lastError
     }
 
     private fun resolveTunnelProxyEndpoint(
