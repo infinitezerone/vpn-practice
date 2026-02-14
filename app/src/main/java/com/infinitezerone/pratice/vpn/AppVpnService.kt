@@ -26,6 +26,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class AppVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
@@ -37,6 +38,7 @@ class AppVpnService : VpnService() {
     private var statsJob: Job? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startJob: Job? = null
+    private var stopJob: Job? = null
     @Volatile
     private var startFailed = false
     @Volatile
@@ -48,7 +50,7 @@ class AppVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            handleStopRequest("VPN stopped.")
+            requestStopAsync("VPN stopped.")
             return START_NOT_STICKY
         }
 
@@ -104,9 +106,12 @@ class AppVpnService : VpnService() {
         isShuttingDown = true
         unregisterNetworkCallback()
         startJob?.cancel()
+        stopJob?.cancel()
         bridgeJob?.cancel()
         statsJob?.cancel()
-        stopBridge()
+        if (!stopRequested) {
+            stopBridgeAsync()
+        }
         serviceScope.cancel()
         vpnInterface?.close()
         vpnInterface = null
@@ -180,7 +185,7 @@ class AppVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        handleStopRequest("VPN permission revoked by system.")
+        requestStopAsync("VPN permission revoked by system.")
         super.onRevoke()
     }
 
@@ -316,21 +321,36 @@ class AppVpnService : VpnService() {
         }
     }
 
-    private fun handleStopRequest(reason: String) {
+    private fun requestStopAsync(reason: String) {
+        if (stopRequested) {
+            return
+        }
         stopRequested = true
-        isShuttingDown = true
         stopAlreadyReported = true
-        unregisterNetworkCallback()
-        startJob?.cancel()
-        bridgeJob?.cancel()
-        statsJob?.cancel()
-        stopBridge()
-        vpnInterface?.close()
-        vpnInterface = null
-        activeProxyHost = null
-        activeProxyPort = -1
         VpnRuntimeState.setStopped(reason)
-        stopSelf()
+
+        stopJob?.cancel()
+        stopJob = serviceScope.launch {
+            isShuttingDown = true
+            unregisterNetworkCallback()
+            startJob?.cancel()
+            bridgeJob?.cancel()
+            statsJob?.cancel()
+            withContext(Dispatchers.IO) {
+                stopBridge()
+            }
+            vpnInterface?.close()
+            vpnInterface = null
+            activeProxyHost = null
+            activeProxyPort = -1
+            stopSelf()
+        }
+    }
+
+    private fun stopBridgeAsync() {
+        CoroutineScope(Dispatchers.IO).launch {
+            stopBridge()
+        }
     }
 
     private fun writeHevTunnelConfig(host: String, port: Int): File? {
