@@ -26,6 +26,7 @@ import org.amnezia.awg.hevtunnel.TProxyService
 import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Socket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -470,7 +471,7 @@ class AppVpnService : VpnService() {
         for (attempt in 1..maxAttempts) {
             VpnRuntimeState.appendLog("Proxy connectivity check $attempt/$maxAttempts")
             val protector = if (vpnInterface != null) {
-                { socket: java.net.Socket -> protect(socket) }
+                { socket: Socket -> bypassVpnForSocket(socket) }
             } else {
                 null
             }
@@ -525,19 +526,7 @@ class AppVpnService : VpnService() {
             destinationEndpointProvider = { host, port ->
                 resolveUpstreamProxyAddress(host, port)
             },
-            bypassVpnForSocket = { socket ->
-                val network = lastNonVpnNetwork
-                if (network != null) {
-                    try {
-                        network.bindSocket(socket)
-                        true
-                    } catch (_: Exception) {
-                        protect(socket)
-                    }
-                } else {
-                    protect(socket)
-                }
-            },
+            bypassVpnForSocket = { socket -> bypassVpnForSocket(socket) },
             allowDirectFallbackForNonHttpPorts = true,
             logger = { message -> VpnRuntimeState.appendLog(message) }
         )
@@ -566,6 +555,21 @@ class AppVpnService : VpnService() {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun bypassVpnForSocket(socket: Socket): Boolean {
+        val protected = protect(socket)
+        val network = lastNonVpnNetwork
+        var bound = false
+        if (network != null) {
+            try {
+                network.bindSocket(socket)
+                bound = true
+            } catch (_: Exception) {
+                // Keep protected path result below.
+            }
+        }
+        return protected || bound
     }
 
     private fun stopHttpBridge() {
