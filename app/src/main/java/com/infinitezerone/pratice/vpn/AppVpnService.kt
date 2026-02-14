@@ -207,9 +207,7 @@ class AppVpnService : VpnService() {
         startJob?.cancel()
         bridgeManager.cancelJobs()
         appTrafficMonitor.stop()
-        if (!stopRequested) {
-            bridgeManager.stopAsync()
-        }
+        bridgeManager.stopNow()
         serviceScope.cancel()
         vpnInterface?.close()
         vpnInterface = null
@@ -364,6 +362,7 @@ class AppVpnService : VpnService() {
         unregisterNetworkCallback()
         startJob?.cancel()
         bridgeManager.cancelJobs()
+        bridgeManager.stopNow()
         vpnInterface?.close()
         vpnInterface = null
         stopHttpBridge()
@@ -374,7 +373,6 @@ class AppVpnService : VpnService() {
         updateUnderlyingNetworkHint(null)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-        bridgeManager.stopAsync()
         appTrafficMonitor.stop()
     }
 
