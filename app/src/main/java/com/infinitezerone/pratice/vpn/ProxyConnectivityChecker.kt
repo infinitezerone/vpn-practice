@@ -4,10 +4,18 @@ import java.net.InetSocketAddress
 import java.net.Socket
 
 object ProxyConnectivityChecker {
-    fun testConnection(host: String, port: Int, timeoutMs: Int = 3_000): String? {
+    fun testConnection(
+        host: String,
+        port: Int,
+        timeoutMs: Int = 3_000,
+        protectSocket: ((Socket) -> Boolean)? = null
+    ): String? {
         val safeHost = EndpointSanitizer.sanitizeHost(host)
         return try {
             Socket().use { socket ->
+                if (protectSocket != null && !protectSocket.invoke(socket)) {
+                    return "Cannot protect proxy socket for $safeHost:$port."
+                }
                 socket.connect(InetSocketAddress(safeHost, port), timeoutMs)
             }
             null

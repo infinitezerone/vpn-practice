@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.ProxyInfo
 import android.net.VpnService
 import android.os.Build
@@ -132,6 +133,11 @@ class AppVpnService : VpnService() {
                 if (stopRequested || isShuttingDown) {
                     return
                 }
+                if (connectivityManager?.getNetworkCapabilities(network)
+                        ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+                ) {
+                    return
+                }
                 if (vpnInterface == null) {
                     return
                 }
@@ -144,16 +150,27 @@ class AppVpnService : VpnService() {
                     if (stopRequested || isShuttingDown) {
                         return@launch
                     }
+                    val wasRunning = VpnRuntimeState.state.value.status == RuntimeStatus.Running
                     VpnRuntimeState.appendLog("Network available. Re-checking proxy connectivity.")
-                    VpnRuntimeState.setConnecting(host, port)
+                    if (!wasRunning) {
+                        VpnRuntimeState.setConnecting(host, port)
+                    }
                     val proxyError = waitForProxyWithRetry(host, port)
                     if (stopRequested || isShuttingDown) {
                         return@launch
                     }
                     if (proxyError == null) {
-                        VpnRuntimeState.setRunning(host, port)
+                        if (!wasRunning) {
+                            VpnRuntimeState.setRunning(host, port)
+                        } else {
+                            VpnRuntimeState.appendLog("Proxy re-check succeeded.")
+                        }
                     } else {
-                        VpnRuntimeState.setError(proxyError)
+                        if (wasRunning) {
+                            VpnRuntimeState.appendLog("Proxy re-check failed: $proxyError")
+                        } else {
+                            VpnRuntimeState.setError(proxyError)
+                        }
                     }
                 }
             }
@@ -271,9 +288,9 @@ class AppVpnService : VpnService() {
                 VpnRuntimeState.appendLog("Starting tun2socks bridge.")
                 TProxyService.TProxyStartService(configFile.absolutePath, tunnelFd)
                 if (!isShuttingDown && !stopRequested) {
-                    startFailed = true
-                    VpnRuntimeState.setError("tun2socks bridge stopped unexpectedly.")
-                    stopSelf()
+                    // Some builds return from the native entrypoint while the bridge
+                    // thread keeps running. Avoid false-negative state transitions.
+                    VpnRuntimeState.appendLog("tun2socks bridge returned control.")
                 }
             } catch (e: Throwable) {
                 if (!isShuttingDown && !stopRequested) {
@@ -373,7 +390,12 @@ class AppVpnService : VpnService() {
 
         for (attempt in 1..maxAttempts) {
             VpnRuntimeState.appendLog("Proxy connectivity check $attempt/$maxAttempts")
-            val error = ProxyConnectivityChecker.testConnection(host, port)
+            val protector = if (vpnInterface != null) {
+                { socket: java.net.Socket -> protect(socket) }
+            } else {
+                null
+            }
+            val error = ProxyConnectivityChecker.testConnection(host, port, protectSocket = protector)
             if (error == null) {
                 return null
             }
