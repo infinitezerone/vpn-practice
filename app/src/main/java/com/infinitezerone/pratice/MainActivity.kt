@@ -12,7 +12,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,18 +20,25 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -86,6 +92,7 @@ private const val TAG_PROTOCOL_HTTP_BUTTON = "protocol_http_button"
 private const val TAG_START_BUTTON = "start_button"
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun VpnHome() {
     val context = LocalContext.current
     val settingsStore = remember(context) { ProxySettingsStore(context) }
@@ -136,333 +143,322 @@ private fun VpnHome() {
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(
-            text = "VPN Controller",
-            style = MaterialTheme.typography.headlineMedium
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        OutlinedTextField(
-            value = hostInput,
-            onValueChange = { hostInput = it },
-            label = { Text("Proxy Host") },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag(TAG_PROXY_HOST_INPUT)
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedTextField(
-            value = portInput,
-            onValueChange = { portInput = it },
-            label = { Text("Proxy Port") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag(TAG_PROXY_PORT_INPUT)
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = "Proxy protocol",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedButton(
-                onClick = {
-                    proxyProtocol = ProxyProtocol.Socks5
-                    settingsStore.saveProxyProtocol(proxyProtocol)
-                    infoMessage = "Proxy protocol set to SOCKS5."
-                },
-                modifier = Modifier.testTag(TAG_PROTOCOL_SOCKS_BUTTON)
-            ) {
-                Text(if (proxyProtocol == ProxyProtocol.Socks5) "SOCKS5 (active)" else "SOCKS5")
-            }
-            OutlinedButton(
-                onClick = {
-                    proxyProtocol = ProxyProtocol.Http
-                    settingsStore.saveProxyProtocol(proxyProtocol)
-                    infoMessage = "Proxy protocol set to HTTP."
-                },
-                modifier = Modifier.testTag(TAG_PROTOCOL_HTTP_BUTTON)
-            ) {
-                Text(if (proxyProtocol == ProxyProtocol.Http) "HTTP (active)" else "HTTP")
-            }
-        }
-        if (proxyProtocol == ProxyProtocol.Http) {
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = "HTTP traffic mode",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.fillMaxWidth()
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Pratice VPN") }
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Card(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
             ) {
-                OutlinedButton(
-                    onClick = {
-                        httpTrafficMode = HttpTrafficMode.CompatFallback
-                        settingsStore.saveHttpTrafficMode(httpTrafficMode)
-                        infoMessage = "HTTP mode set to compat fallback."
-                    }
-                ) {
-                    Text(
-                        if (httpTrafficMode == HttpTrafficMode.CompatFallback) {
-                            "Compat (active)"
-                        } else {
-                            "Compat"
-                        }
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("Connection", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = hostInput,
+                        onValueChange = { hostInput = it },
+                        label = { Text("Proxy Host") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(TAG_PROXY_HOST_INPUT)
                     )
-                }
-                OutlinedButton(
-                    onClick = {
-                        httpTrafficMode = HttpTrafficMode.StrictProxy
-                        settingsStore.saveHttpTrafficMode(httpTrafficMode)
-                        infoMessage = "HTTP mode set to strict proxy."
-                    }
-                ) {
-                    Text(
-                        if (httpTrafficMode == HttpTrafficMode.StrictProxy) {
-                            "Strict (active)"
-                        } else {
-                            "Strict"
-                        }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = portInput,
+                        onValueChange = { portInput = it },
+                        label = { Text("Proxy Port") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(TAG_PROXY_PORT_INPUT)
                     )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-        OutlinedTextField(
-            value = proxyBypassRawInput,
-            onValueChange = { proxyBypassRawInput = it },
-            label = { Text("Bypass proxy for (comma-separated)") },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag(TAG_PROXY_BYPASS_INPUT)
-        )
-        validationError?.let {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = it,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable {
-                    autoReconnect = !autoReconnect
-                    settingsStore.saveAutoReconnectEnabled(autoReconnect)
-                    infoMessage = if (autoReconnect) {
-                        "Auto-reconnect on boot enabled."
-                    } else {
-                        "Auto-reconnect on boot disabled."
-                    }
-                },
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Checkbox(
-                checked = autoReconnect,
-                onCheckedChange = { checked ->
-                    autoReconnect = checked
-                    settingsStore.saveAutoReconnectEnabled(checked)
-                    infoMessage = if (checked) {
-                        "Auto-reconnect on boot enabled."
-                    } else {
-                        "Auto-reconnect on boot disabled."
-                    }
-                }
-            )
-            Text("Auto-reconnect on boot")
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = "Routing mode",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedButton(
-                onClick = {
-                    routingMode = RoutingMode.Bypass
-                    settingsStore.saveRoutingMode(routingMode)
-                    infoMessage = "Routing mode set to bypass."
-                }
-            ) {
-                Text(if (routingMode == RoutingMode.Bypass) "Bypass (active)" else "Bypass")
-            }
-            OutlinedButton(
-                onClick = {
-                    routingMode = RoutingMode.Allowlist
-                    settingsStore.saveRoutingMode(routingMode)
-                    infoMessage = "Routing mode set to allowlist."
-                }
-            ) {
-                Text(if (routingMode == RoutingMode.Allowlist) "Allowlist (active)" else "Allowlist")
-            }
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = if (routingMode == RoutingMode.Bypass) {
-                    "Bypass apps: ${bypassPackages.size}"
-                } else {
-                    "Allowlist apps: ${bypassPackages.size}"
-                },
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Button(onClick = { showBypassDialog = true }) {
-                Text(if (routingMode == RoutingMode.Bypass) "Select Bypass Apps" else "Select Allowlist Apps")
-            }
-        }
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = "Status: ${runtimeSnapshot.status.name}",
-            style = MaterialTheme.typography.bodyLarge
-        )
-        runtimeSnapshot.lastError?.let {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = it,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-        infoMessage?.let {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(text = it, style = MaterialTheme.typography.bodyMedium)
-        }
-        Spacer(modifier = Modifier.height(24.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Button(
-                onClick = {
-                    val host = hostInput.trim()
-                    val port = portInput.trim().toIntOrNull() ?: return@Button
-                    persistBaseSettings(host, port)
-                    infoMessage = "Proxy settings saved."
-                },
-                enabled = configIsValid
-            ) {
-                Text("Save")
-            }
-            Button(
-                onClick = {
-                    val host = hostInput.trim()
-                    val port = portInput.trim().toIntOrNull() ?: return@Button
-                    persistBaseSettings(host, port)
-                    uiScope.launch {
-                        isTestingConnection = true
-                        val error = withContext(Dispatchers.IO) {
-                            ProxyConnectivityChecker.testConnection(
-                                host = host,
-                                port = port,
-                                protocol = proxyProtocol
-                            )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text("Proxy protocol", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SelectableModeButton(
+                            label = "SOCKS5",
+                            selected = proxyProtocol == ProxyProtocol.Socks5,
+                            testTag = TAG_PROTOCOL_SOCKS_BUTTON
+                        ) {
+                            proxyProtocol = ProxyProtocol.Socks5
+                            settingsStore.saveProxyProtocol(proxyProtocol)
+                            infoMessage = "Proxy protocol set to SOCKS5."
                         }
-                        if (error == null) {
-                            infoMessage = "Proxy test succeeded."
-                            VpnRuntimeState.appendLog(
-                                "Proxy test succeeded for ${proxyProtocol.name} ${EndpointSanitizer.sanitizeHost(host)}:$port"
-                            )
-                        } else {
-                            infoMessage = "Proxy test failed: $error"
-                            VpnRuntimeState.appendLog(
-                                "Proxy test failed for ${proxyProtocol.name} ${EndpointSanitizer.sanitizeHost(host)}:$port - $error"
-                            )
+                        SelectableModeButton(
+                            label = "HTTP",
+                            selected = proxyProtocol == ProxyProtocol.Http,
+                            testTag = TAG_PROTOCOL_HTTP_BUTTON
+                        ) {
+                            proxyProtocol = ProxyProtocol.Http
+                            settingsStore.saveProxyProtocol(proxyProtocol)
+                            infoMessage = "Proxy protocol set to HTTP."
                         }
-                        isTestingConnection = false
                     }
-                },
-                enabled = configIsValid && !isTestingConnection
-            ) {
-                if (isTestingConnection) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.height(20.dp),
-                        strokeWidth = 2.dp
-                    )
-                } else {
-                    Text("Test Connection")
+                    if (proxyProtocol == ProxyProtocol.Http) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text("HTTP traffic mode", style = MaterialTheme.typography.bodyMedium)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SelectableModeButton(
+                                label = "Compat",
+                                selected = httpTrafficMode == HttpTrafficMode.CompatFallback
+                            ) {
+                                httpTrafficMode = HttpTrafficMode.CompatFallback
+                                settingsStore.saveHttpTrafficMode(httpTrafficMode)
+                                infoMessage = "HTTP mode set to compat fallback."
+                            }
+                            SelectableModeButton(
+                                label = "Strict",
+                                selected = httpTrafficMode == HttpTrafficMode.StrictProxy
+                            ) {
+                                httpTrafficMode = HttpTrafficMode.StrictProxy
+                                settingsStore.saveHttpTrafficMode(httpTrafficMode)
+                                infoMessage = "HTTP mode set to strict proxy."
+                            }
+                        }
+                    }
                 }
             }
-            if (runtimeSnapshot.status == RuntimeStatus.Running ||
-                runtimeSnapshot.status == RuntimeStatus.Connecting
-            ) {
-                Button(onClick = {
-                    AppVpnService.stop(context)
-                    infoMessage = null
-                }) {
-                    Text("Stop")
-                }
-            } else {
-                Button(
-                    onClick = {
-                        val host = hostInput.trim()
-                        val port = portInput.trim().toIntOrNull()
-                        if (port == null) {
-                            VpnRuntimeState.setError("Failed to start VPN: invalid proxy settings.")
-                            return@Button
-                        }
 
-                        persistBaseSettings(host, port)
-                        infoMessage = null
-                        val intent: Intent? = VpnService.prepare(context)
-                        if (intent != null) {
-                            permissionLauncher.launch(intent)
-                        } else {
-                            AppVpnService.start(context, host, port, proxyProtocol)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("Routing & Bypass", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = proxyBypassRawInput,
+                        onValueChange = { proxyBypassRawInput = it },
+                        label = { Text("Bypass proxy for (comma-separated)") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag(TAG_PROXY_BYPASS_INPUT)
+                    )
+                    validationError?.let {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                autoReconnect = !autoReconnect
+                                settingsStore.saveAutoReconnectEnabled(autoReconnect)
+                                infoMessage = if (autoReconnect) {
+                                    "Auto-reconnect on boot enabled."
+                                } else {
+                                    "Auto-reconnect on boot disabled."
+                                }
+                            },
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = autoReconnect,
+                            onCheckedChange = { checked ->
+                                autoReconnect = checked
+                                settingsStore.saveAutoReconnectEnabled(checked)
+                                infoMessage = if (checked) {
+                                    "Auto-reconnect on boot enabled."
+                                } else {
+                                    "Auto-reconnect on boot disabled."
+                                }
+                            }
+                        )
+                        Text("Auto-reconnect on boot")
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Routing mode", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SelectableModeButton(
+                            label = "Bypass",
+                            selected = routingMode == RoutingMode.Bypass
+                        ) {
+                            routingMode = RoutingMode.Bypass
+                            settingsStore.saveRoutingMode(routingMode)
+                            infoMessage = "Routing mode set to bypass."
                         }
-                    },
-                    enabled = configIsValid && runtimeSnapshot.status != RuntimeStatus.Connecting,
-                    modifier = Modifier.testTag(TAG_START_BUTTON)
-                ) {
-                    Text("Start")
+                        SelectableModeButton(
+                            label = "Allowlist",
+                            selected = routingMode == RoutingMode.Allowlist
+                        ) {
+                            routingMode = RoutingMode.Allowlist
+                            settingsStore.saveRoutingMode(routingMode)
+                            infoMessage = "Routing mode set to allowlist."
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (routingMode == RoutingMode.Bypass) {
+                                "Bypass apps: ${bypassPackages.size}"
+                            } else {
+                                "Allowlist apps: ${bypassPackages.size}"
+                            },
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Button(onClick = { showBypassDialog = true }) {
+                            Text(if (routingMode == RoutingMode.Bypass) "Select Bypass Apps" else "Select Allowlist Apps")
+                        }
+                    }
                 }
             }
-        }
 
-        Spacer(modifier = Modifier.height(24.dp))
-        Text(
-            text = "Recent logs",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(140.dp)
-        ) {
-            itemsIndexed(runtimeSnapshot.logs) { _, line ->
-                Text(text = line, style = MaterialTheme.typography.bodySmall)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("Control", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = "Status: ${runtimeSnapshot.status.name}",
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                    runtimeSnapshot.lastError?.let {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = it,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    infoMessage?.let {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(text = it, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            val host = hostInput.trim()
+                            val port = portInput.trim().toIntOrNull() ?: return@Button
+                            persistBaseSettings(host, port)
+                            infoMessage = "Proxy settings saved."
+                        },
+                        enabled = configIsValid,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Save")
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            val host = hostInput.trim()
+                            val port = portInput.trim().toIntOrNull() ?: return@Button
+                            persistBaseSettings(host, port)
+                            uiScope.launch {
+                                isTestingConnection = true
+                                val error = withContext(Dispatchers.IO) {
+                                    ProxyConnectivityChecker.testConnection(
+                                        host = host,
+                                        port = port,
+                                        protocol = proxyProtocol
+                                    )
+                                }
+                                if (error == null) {
+                                    infoMessage = "Proxy test succeeded."
+                                    VpnRuntimeState.appendLog(
+                                        "Proxy test succeeded for ${proxyProtocol.name} ${EndpointSanitizer.sanitizeHost(host)}:$port"
+                                    )
+                                } else {
+                                    infoMessage = "Proxy test failed: $error"
+                                    VpnRuntimeState.appendLog(
+                                        "Proxy test failed for ${proxyProtocol.name} ${EndpointSanitizer.sanitizeHost(host)}:$port - $error"
+                                    )
+                                }
+                                isTestingConnection = false
+                            }
+                        },
+                        enabled = configIsValid && !isTestingConnection,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        if (isTestingConnection) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Text("Test Connection")
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    if (runtimeSnapshot.status == RuntimeStatus.Running ||
+                        runtimeSnapshot.status == RuntimeStatus.Connecting
+                    ) {
+                        Button(
+                            onClick = {
+                                AppVpnService.stop(context)
+                                infoMessage = null
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Stop")
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                val host = hostInput.trim()
+                                val port = portInput.trim().toIntOrNull()
+                                if (port == null) {
+                                    VpnRuntimeState.setError("Failed to start VPN: invalid proxy settings.")
+                                    return@Button
+                                }
+
+                                persistBaseSettings(host, port)
+                                infoMessage = null
+                                val intent: Intent? = VpnService.prepare(context)
+                                if (intent != null) {
+                                    permissionLauncher.launch(intent)
+                                } else {
+                                    AppVpnService.start(context, host, port, proxyProtocol)
+                                }
+                            },
+                            enabled = configIsValid && runtimeSnapshot.status != RuntimeStatus.Connecting,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag(TAG_START_BUTTON)
+                        ) {
+                            Text("Start")
+                        }
+                    }
+                }
+            }
+
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text("Recent logs", style = MaterialTheme.typography.titleMedium)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp)
+                    ) {
+                        itemsIndexed(runtimeSnapshot.logs) { _, line ->
+                            Text(text = line, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
             }
         }
     }
@@ -485,6 +481,29 @@ private fun VpnHome() {
                 showBypassDialog = false
             }
         )
+    }
+}
+
+@Composable
+private fun SelectableModeButton(
+    label: String,
+    selected: Boolean,
+    testTag: String? = null,
+    onClick: () -> Unit
+) {
+    val buttonModifier = if (testTag.isNullOrBlank()) {
+        Modifier
+    } else {
+        Modifier.testTag(testTag)
+    }
+    if (selected) {
+        Button(onClick = onClick, modifier = buttonModifier) {
+            Text("$label (active)")
+        }
+    } else {
+        OutlinedButton(onClick = onClick, modifier = buttonModifier) {
+            Text(label)
+        }
     }
 }
 
