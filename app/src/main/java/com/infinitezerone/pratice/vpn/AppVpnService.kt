@@ -19,6 +19,7 @@ import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.infinitezerone.pratice.R
+import com.infinitezerone.pratice.config.HttpTrafficMode
 import com.infinitezerone.pratice.config.ProxyProtocol
 import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.config.RoutingMode
@@ -252,6 +253,7 @@ class AppVpnService : VpnService() {
         val host = activeProxyHost
         val port = activeProxyPort
         val protocol = activeProxyProtocol
+        val httpTrafficMode = settingsStore.loadHttpTrafficMode()
         val proxyBypassRules = settingsStore.loadProxyBypassList()
         if (host.isNullOrBlank() || port !in 1..65535) {
             return false
@@ -265,6 +267,7 @@ class AppVpnService : VpnService() {
             .addRoute("0.0.0.0", 0)
 
         if (protocol == ProxyProtocol.Http) {
+            VpnRuntimeState.appendLog("HTTP traffic mode: ${httpTrafficMode.name}")
             builder.addDnsServer(MAP_DNS_ADDRESS)
             VpnRuntimeState.appendLog("Mapped DNS enabled at $MAP_DNS_ADDRESS for HTTP upstream.")
         } else {
@@ -330,7 +333,8 @@ class AppVpnService : VpnService() {
             protocol = protocol,
             upstreamHost = safeHost,
             upstreamPort = port,
-            proxyBypassRules = proxyBypassRules
+            proxyBypassRules = proxyBypassRules,
+            allowDirectFallbackForNonHttpPorts = httpTrafficMode == HttpTrafficMode.CompatFallback
         )
         if (bridgePort !in 1..65535) {
             return false
@@ -537,7 +541,8 @@ class AppVpnService : VpnService() {
         protocol: ProxyProtocol,
         upstreamHost: String,
         upstreamPort: Int,
-        proxyBypassRules: List<String>
+        proxyBypassRules: List<String>,
+        allowDirectFallbackForNonHttpPorts: Boolean
     ): Triple<String, Int, String> {
         stopHttpBridge()
         if (protocol == ProxyProtocol.Socks5) {
@@ -557,7 +562,7 @@ class AppVpnService : VpnService() {
                 matchingBypassRule(destinationHost, proxyBypassRules)
             },
             bypassVpnForSocket = { socket -> bypassVpnForSocket(socket) },
-            allowDirectFallbackForNonHttpPorts = true,
+            allowDirectFallbackForNonHttpPorts = allowDirectFallbackForNonHttpPorts,
             logger = { message -> VpnRuntimeState.appendLog(message) }
         )
         val localPort = bridge.start()

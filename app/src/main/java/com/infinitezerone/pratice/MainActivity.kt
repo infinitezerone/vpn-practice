@@ -48,6 +48,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.infinitezerone.pratice.config.ProxyConfigValidator
+import com.infinitezerone.pratice.config.HttpTrafficMode
 import com.infinitezerone.pratice.config.ProxyProtocol
 import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.config.RoutingMode
@@ -93,6 +94,7 @@ private fun VpnHome() {
     var hostInput by rememberSaveable { mutableStateOf(settingsStore.loadHost()) }
     var portInput by rememberSaveable { mutableStateOf(settingsStore.loadPortText()) }
     var proxyProtocol by remember { mutableStateOf(settingsStore.loadProxyProtocol()) }
+    var httpTrafficMode by remember { mutableStateOf(settingsStore.loadHttpTrafficMode()) }
     var proxyBypassRawInput by rememberSaveable { mutableStateOf(settingsStore.loadProxyBypassRawInput()) }
     var bypassPackages by remember { mutableStateOf(settingsStore.loadBypassPackages()) }
     var routingMode by remember { mutableStateOf(settingsStore.loadRoutingMode()) }
@@ -109,6 +111,7 @@ private fun VpnHome() {
     fun persistBaseSettings(host: String, port: Int) {
         settingsStore.save(host, port)
         settingsStore.saveProxyProtocol(proxyProtocol)
+        settingsStore.saveHttpTrafficMode(httpTrafficMode)
         settingsStore.saveRoutingMode(routingMode)
         settingsStore.saveAutoReconnectEnabled(autoReconnect)
         settingsStore.saveProxyBypassRawInput(proxyBypassRawInput)
@@ -195,6 +198,50 @@ private fun VpnHome() {
                 modifier = Modifier.testTag(TAG_PROTOCOL_HTTP_BUTTON)
             ) {
                 Text(if (proxyProtocol == ProxyProtocol.Http) "HTTP (active)" else "HTTP")
+            }
+        }
+        if (proxyProtocol == ProxyProtocol.Http) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = "HTTP traffic mode",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        httpTrafficMode = HttpTrafficMode.CompatFallback
+                        settingsStore.saveHttpTrafficMode(httpTrafficMode)
+                        infoMessage = "HTTP mode set to compat fallback."
+                    }
+                ) {
+                    Text(
+                        if (httpTrafficMode == HttpTrafficMode.CompatFallback) {
+                            "Compat (active)"
+                        } else {
+                            "Compat"
+                        }
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        httpTrafficMode = HttpTrafficMode.StrictProxy
+                        settingsStore.saveHttpTrafficMode(httpTrafficMode)
+                        infoMessage = "HTTP mode set to strict proxy."
+                    }
+                ) {
+                    Text(
+                        if (httpTrafficMode == HttpTrafficMode.StrictProxy) {
+                            "Strict (active)"
+                        } else {
+                            "Strict"
+                        }
+                    )
+                }
             }
         }
         Spacer(modifier = Modifier.height(12.dp))

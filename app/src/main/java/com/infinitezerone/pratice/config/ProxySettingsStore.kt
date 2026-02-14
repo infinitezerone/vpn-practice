@@ -18,6 +18,11 @@ enum class ProxyProtocol {
     Http
 }
 
+enum class HttpTrafficMode {
+    CompatFallback,
+    StrictProxy
+}
+
 class ProxySettingsStore(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -52,6 +57,18 @@ class ProxySettingsStore(context: Context) {
     fun saveProxyProtocol(protocol: ProxyProtocol) {
         prefs.edit()
             .putString(KEY_PROXY_PROTOCOL, protocol.name)
+            .apply()
+    }
+
+    fun loadHttpTrafficMode(): HttpTrafficMode {
+        val raw = prefs.getString(KEY_HTTP_TRAFFIC_MODE, HttpTrafficMode.CompatFallback.name)
+            ?: HttpTrafficMode.CompatFallback.name
+        return HttpTrafficMode.entries.firstOrNull { it.name == raw } ?: HttpTrafficMode.CompatFallback
+    }
+
+    fun saveHttpTrafficMode(mode: HttpTrafficMode) {
+        prefs.edit()
+            .putString(KEY_HTTP_TRAFFIC_MODE, mode.name)
             .apply()
     }
 
@@ -101,6 +118,7 @@ class ProxySettingsStore(context: Context) {
         const val KEY_BYPASS_PACKAGES = "bypass_packages"
         const val KEY_ROUTING_MODE = "routing_mode"
         const val KEY_PROXY_PROTOCOL = "proxy_protocol"
+        const val KEY_HTTP_TRAFFIC_MODE = "http_traffic_mode"
         const val KEY_AUTO_RECONNECT = "auto_reconnect"
         const val KEY_PROXY_BYPASS_LIST = "proxy_bypass_list"
     }
