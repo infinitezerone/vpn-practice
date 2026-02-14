@@ -92,6 +92,7 @@ class AppVpnService : VpnService() {
         activeProxyProtocol = protocol
         startJob?.cancel()
         startJob = serviceScope.launch {
+            VpnRuntimeState.appendLog("Proxy protocol: ${protocol.name}")
             VpnRuntimeState.setConnecting(host, port)
             val proxyError = waitForProxyWithRetry(host, port)
             if (stopRequested || isShuttingDown) {
