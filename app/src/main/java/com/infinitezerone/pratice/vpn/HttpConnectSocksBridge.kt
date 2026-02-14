@@ -20,7 +20,9 @@ class HttpConnectSocksBridge(
     private val upstreamHost: String,
     private val upstreamPort: Int,
     private val upstreamEndpointProvider: () -> InetSocketAddress?,
+    private val destinationEndpointProvider: (String, Int) -> InetSocketAddress?,
     private val bypassVpnForSocket: (Socket) -> Boolean,
+    private val allowDirectFallbackForNonHttpPorts: Boolean,
     private val logger: (String) -> Unit
 ) {
     @Volatile
@@ -83,6 +85,16 @@ class HttpConnectSocksBridge(
 
             val destination = parseConnectRequest(clientInput, clientOutput) ?: return
             logger("HTTP bridge conn#$connectionId SOCKS CONNECT ${destination.first}:${destination.second}")
+            if (isUnsupportedMappedDnsTls(destination)) {
+                sendSocksFailure(clientOutput, REP_CONNECTION_REFUSED)
+                logger("HTTP bridge conn#$connectionId rejected: mapped DNS over TLS is not supported")
+                return
+            }
+            if (allowDirectFallbackForNonHttpPorts && !isLikelyHttpPort(destination.second)) {
+                if (startDirectPassthrough(connectionId, destination, clientInput, clientOutput, socksClient)) {
+                    return
+                }
+            }
             val upstream = Socket()
             try {
                 if (!bypassVpnForSocket(upstream)) {
@@ -199,6 +211,54 @@ class HttpConnectSocksBridge(
         )
     }
 
+    private fun startDirectPassthrough(
+        connectionId: Long,
+        destination: Pair<String, Int>,
+        clientInput: BufferedInputStream,
+        clientOutput: BufferedOutputStream,
+        socksClient: Socket
+    ): Boolean {
+        val direct = Socket()
+        try {
+            if (!bypassVpnForSocket(direct)) {
+                logger("HTTP bridge conn#$connectionId direct fallback skipped: cannot bypass VPN")
+                return false
+            }
+            val endpoint = destinationEndpointProvider(destination.first, destination.second)
+            if (endpoint == null) {
+                logger("HTTP bridge conn#$connectionId direct fallback skipped: cannot resolve destination")
+                return false
+            }
+            direct.connect(endpoint, CONNECT_TIMEOUT_MS)
+            direct.soTimeout = CONNECT_TIMEOUT_MS
+            logger(
+                "HTTP bridge conn#$connectionId direct fallback connected ${endpoint.hostString}:${endpoint.port}"
+            )
+            val upstreamInput = BufferedInputStream(direct.getInputStream())
+            val upstreamOutput = BufferedOutputStream(direct.getOutputStream())
+            sendSocksSuccess(clientOutput)
+            pipeBidirectional(
+                connectionId = connectionId,
+                clientInput = clientInput,
+                clientOutput = clientOutput,
+                upstreamInput = upstreamInput,
+                upstreamOutput = upstreamOutput,
+                upstream = direct,
+                socksClient = socksClient
+            )
+            return true
+        } catch (_: Exception) {
+            logger("HTTP bridge conn#$connectionId direct fallback failed")
+            return false
+        } finally {
+            try {
+                direct.close()
+            } catch (_: Exception) {
+                // Ignored.
+            }
+        }
+    }
+
     private fun isUpstreamPassthroughDestination(
         destination: Pair<String, Int>,
         upstreamEndpoint: InetSocketAddress
@@ -214,6 +274,15 @@ class HttpConnectSocksBridge(
         }
         val upstreamIp = upstreamEndpoint.address?.hostAddress?.trim()?.lowercase()
         return upstreamIp != null && normalizedDestination == upstreamIp
+    }
+
+    private fun isLikelyHttpPort(port: Int): Boolean {
+        return port == 80 || port == 443 || port == 8080 || port == 8443
+    }
+
+    private fun isUnsupportedMappedDnsTls(destination: Pair<String, Int>): Boolean {
+        val (host, port) = destination
+        return host == "198.18.0.2" && port == 853
     }
 
     private fun performSocksHandshake(

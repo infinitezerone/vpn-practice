@@ -515,6 +515,9 @@ class AppVpnService : VpnService() {
             upstreamEndpointProvider = {
                 resolveUpstreamProxyAddress(upstreamHost, upstreamPort)
             },
+            destinationEndpointProvider = { host, port ->
+                resolveUpstreamProxyAddress(host, port)
+            },
             bypassVpnForSocket = { socket ->
                 val network = lastNonVpnNetwork
                 if (network != null) {
@@ -528,6 +531,7 @@ class AppVpnService : VpnService() {
                     protect(socket)
                 }
             },
+            allowDirectFallbackForNonHttpPorts = true,
             logger = { message -> VpnRuntimeState.appendLog(message) }
         )
         val localPort = bridge.start()

@@ -46,7 +46,11 @@ class VpnHttpProxyForwardingTest {
         assertTrue(
             "Expected HTTP bridge connection telemetry. Logs:\n$logs",
             logs.contains("HTTP bridge conn#") &&
-                (logs.contains(" accepted: HTTP/1.") || logs.contains("passthrough mode for direct proxy destination"))
+                (
+                    logs.contains(" accepted: HTTP/1.") ||
+                        logs.contains("passthrough mode for direct proxy destination") ||
+                        logs.contains("direct fallback connected")
+                    )
         )
         assertTrue("Expected bridge stats to show non-zero traffic. Logs:\n$logs", hasNonZeroStats(logs))
     }
