@@ -48,6 +48,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("com.zaneschepke:hevtunnel:1.0.1")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
