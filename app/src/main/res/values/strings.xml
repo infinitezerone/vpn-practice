@@ -1,3 +1,14 @@
 <resources>
     <string name="app_name">pratice</string>
+    <string name="widget_title">Pratice VPN</string>
+    <string name="widget_description">Start/Stop Pratice VPN from home screen.</string>
+    <string name="widget_status_stopped">Status: Stopped</string>
+    <string name="widget_status_connecting">Status: Connecting</string>
+    <string name="widget_status_running">Status: Running</string>
+    <string name="widget_status_error">Status: Error</string>
+    <string name="widget_subtitle_default">Use saved proxy config to start or stop quickly.</string>
+    <string name="widget_start">Start</string>
+    <string name="widget_stop">Stop</string>
+    <string name="widget_refresh">Refresh</string>
+    <string name="widget_open_app">Open App</string>
 </resources>

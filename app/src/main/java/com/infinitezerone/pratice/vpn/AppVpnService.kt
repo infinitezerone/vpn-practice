@@ -19,6 +19,7 @@ import com.infinitezerone.pratice.R
 import com.infinitezerone.pratice.config.ProxyProtocol
 import com.infinitezerone.pratice.config.ProxySettingsStore
 import com.infinitezerone.pratice.config.RoutingMode
+import com.infinitezerone.pratice.widget.VpnControlWidgetProvider
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -98,6 +99,7 @@ class AppVpnService : VpnService() {
                     if (proxyError == null) {
                         if (!wasRunning) {
                             VpnRuntimeState.setRunning(host, port)
+                            refreshWidget()
                         } else {
                             VpnRuntimeState.appendLog("Proxy re-check succeeded.")
                         }
@@ -106,6 +108,7 @@ class AppVpnService : VpnService() {
                             VpnRuntimeState.appendLog("Proxy re-check failed: $proxyError")
                         } else {
                             VpnRuntimeState.setError(proxyError)
+                            refreshWidget()
                         }
                     }
                 }
@@ -175,6 +178,7 @@ class AppVpnService : VpnService() {
         startJob = serviceScope.launch {
             VpnRuntimeState.appendLog("Proxy protocol: ${protocol.name}")
             VpnRuntimeState.setConnecting(host, port)
+            refreshWidget()
             val proxyError = proxyProbeCoordinator.waitForProxyWithRetry(host, port, protocol)
             if (stopRequested || isShuttingDown) {
                 return@launch
@@ -182,6 +186,7 @@ class AppVpnService : VpnService() {
             if (proxyError != null) {
                 startFailed = true
                 VpnRuntimeState.setError(proxyError)
+                refreshWidget()
                 stopSelf()
                 return@launch
             }
@@ -189,12 +194,14 @@ class AppVpnService : VpnService() {
             if (!startVpnTunnel()) {
                 startFailed = true
                 VpnRuntimeState.setError("Failed to establish VPN tunnel.")
+                refreshWidget()
                 stopSelf()
                 return@launch
             }
 
             if (!stopRequested && !isShuttingDown) {
                 VpnRuntimeState.setRunning(host, port)
+                refreshWidget()
             }
         }
 
@@ -220,6 +227,7 @@ class AppVpnService : VpnService() {
         val preserveErrorState = !stopRequested && VpnRuntimeState.state.value.status == RuntimeStatus.Error
         if (!stopAlreadyReported && !preserveErrorState) {
             VpnRuntimeState.setStopped("VPN stopped.")
+            refreshWidget()
         }
         super.onDestroy()
     }
@@ -358,6 +366,7 @@ class AppVpnService : VpnService() {
         stopAlreadyReported = true
         isShuttingDown = true
         VpnRuntimeState.setStopped(reason)
+        refreshWidget()
         serviceScope.coroutineContext.cancelChildren()
         unregisterNetworkCallback()
         startJob?.cancel()
@@ -466,6 +475,10 @@ class AppVpnService : VpnService() {
         } catch (_: Exception) {
             // Hint API may be unavailable on some devices.
         }
+    }
+
+    private fun refreshWidget() {
+        VpnControlWidgetProvider.updateAllWidgets(this)
     }
 
     private fun buildNotification(host: String, port: Int): Notification =
