@@ -5,16 +5,19 @@ import android.content.Intent
 import android.net.VpnService
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.LocalContext
+import androidx.glance.LocalSize
 import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.background
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.provideContent
@@ -41,7 +44,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import androidx.compose.runtime.collectAsState
 
 class VpnControlWidgetProvider : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = VpnControlGlanceWidget()
@@ -54,10 +56,19 @@ class VpnControlWidgetProvider : GlanceAppWidgetReceiver() {
 }
 
 private class VpnControlGlanceWidget : GlanceAppWidget() {
+    override val sizeMode = SizeMode.Responsive(
+        setOf(
+            DpSize(180.dp, 110.dp),
+            DpSize(220.dp, 140.dp),
+            DpSize(280.dp, 180.dp)
+        )
+    )
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         provideContent {
             val appContext = LocalContext.current
-            val snapshot = VpnRuntimeState.state.collectAsState().value
+            val size = LocalSize.current
+            val snapshot = VpnRuntimeState.state.value
             val statusText = when (snapshot.status) {
                 RuntimeStatus.Stopped -> appContext.getString(R.string.widget_status_stopped)
                 RuntimeStatus.Connecting -> appContext.getString(R.string.widget_status_connecting)
@@ -70,6 +81,8 @@ private class VpnControlGlanceWidget : GlanceAppWidget() {
             val subtitleSingleLine = subtitle
                 .replace('\n', ' ')
                 .let { if (it.length > 56) "${it.take(53)}..." else it }
+            val tinyLayout = size.height < 130.dp || size.width < 190.dp
+            val compactLayout = size.height < 165.dp || size.width < 240.dp
 
             Column(
                 modifier = GlanceModifier
@@ -83,31 +96,61 @@ private class VpnControlGlanceWidget : GlanceAppWidget() {
                 )
                 Spacer(modifier = GlanceModifier.height(4.dp))
                 Text(text = statusText)
-                Spacer(modifier = GlanceModifier.height(2.dp))
-                Text(text = subtitleSingleLine)
-                Spacer(modifier = GlanceModifier.height(6.dp))
-                Row(modifier = GlanceModifier.fillMaxWidth()) {
-                    ActionChip(
-                        text = appContext.getString(R.string.widget_start),
-                        modifier = GlanceModifier.clickable(actionRunCallback<StartVpnAction>())
-                    )
-                    Spacer(modifier = GlanceModifier.width(10.dp))
-                    ActionChip(
-                        text = appContext.getString(R.string.widget_stop),
-                        modifier = GlanceModifier.clickable(actionRunCallback<StopVpnAction>())
-                    )
+                if (!tinyLayout) {
+                    Spacer(modifier = GlanceModifier.height(2.dp))
+                    Text(text = subtitleSingleLine)
                 }
-                Spacer(modifier = GlanceModifier.height(4.dp))
-                Row(modifier = GlanceModifier.fillMaxWidth()) {
-                    ActionChip(
-                        text = appContext.getString(R.string.widget_refresh),
-                        modifier = GlanceModifier.clickable(actionRunCallback<RefreshWidgetAction>())
-                    )
-                    Spacer(modifier = GlanceModifier.width(10.dp))
-                    ActionChip(
-                        text = appContext.getString(R.string.widget_open_app),
-                        modifier = GlanceModifier.clickable(actionStartActivity<MainActivity>())
-                    )
+                Spacer(modifier = GlanceModifier.height(6.dp))
+
+                if (tinyLayout) {
+                    Row(modifier = GlanceModifier.fillMaxWidth()) {
+                        ActionChip(
+                            text = appContext.getString(R.string.widget_start),
+                            modifier = GlanceModifier.clickable(actionRunCallback<StartVpnAction>())
+                        )
+                        Spacer(modifier = GlanceModifier.width(10.dp))
+                        ActionChip(
+                            text = appContext.getString(R.string.widget_stop),
+                            modifier = GlanceModifier.clickable(actionRunCallback<StopVpnAction>())
+                        )
+                        Spacer(modifier = GlanceModifier.width(10.dp))
+                        ActionChip(
+                            text = appContext.getString(R.string.widget_open_short),
+                            modifier = GlanceModifier.clickable(actionStartActivity<MainActivity>())
+                        )
+                    }
+                } else {
+                    Row(modifier = GlanceModifier.fillMaxWidth()) {
+                        ActionChip(
+                            text = appContext.getString(R.string.widget_start),
+                            modifier = GlanceModifier.clickable(actionRunCallback<StartVpnAction>())
+                        )
+                        Spacer(modifier = GlanceModifier.width(10.dp))
+                        ActionChip(
+                            text = appContext.getString(R.string.widget_stop),
+                            modifier = GlanceModifier.clickable(actionRunCallback<StopVpnAction>())
+                        )
+                    }
+                    Spacer(modifier = GlanceModifier.height(if (compactLayout) 3.dp else 4.dp))
+                    Row(modifier = GlanceModifier.fillMaxWidth()) {
+                        ActionChip(
+                            text = if (compactLayout) {
+                                appContext.getString(R.string.widget_refresh_short)
+                            } else {
+                                appContext.getString(R.string.widget_refresh)
+                            },
+                            modifier = GlanceModifier.clickable(actionRunCallback<RefreshWidgetAction>())
+                        )
+                        Spacer(modifier = GlanceModifier.width(10.dp))
+                        ActionChip(
+                            text = if (compactLayout) {
+                                appContext.getString(R.string.widget_open_short)
+                            } else {
+                                appContext.getString(R.string.widget_open_app)
+                            },
+                            modifier = GlanceModifier.clickable(actionStartActivity<MainActivity>())
+                        )
+                    }
                 }
             }
         }
