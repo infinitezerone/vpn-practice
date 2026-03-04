@@ -1,6 +1,8 @@
 package com.infinitezerone.pratice.widget
 
 import android.content.Context
+import android.content.Intent
+import android.net.VpnService
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 import androidx.glance.GlanceId
@@ -116,11 +118,17 @@ private object VpnControlWidgetUpdater {
     }
 }
 
-private class StartVpnAction : ActionCallback {
+class StartVpnAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
         val config = ProxySettingsStore(context).loadConfigOrNull()
         if (config == null) {
             VpnRuntimeState.setError("Cannot start from widget: proxy config is invalid.")
+        } else if (VpnService.prepare(context) != null) {
+            VpnRuntimeState.setError("VPN permission required. Open app and tap Start once.")
+            val openAppIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            context.startActivity(openAppIntent)
         } else {
             AppVpnService.start(context, config.host, config.port, config.protocol)
         }
@@ -128,14 +136,14 @@ private class StartVpnAction : ActionCallback {
     }
 }
 
-private class StopVpnAction : ActionCallback {
+class StopVpnAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
         AppVpnService.stop(context)
         VpnControlGlanceWidget().updateAll(context)
     }
 }
 
-private class RefreshWidgetAction : ActionCallback {
+class RefreshWidgetAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
         VpnControlGlanceWidget().updateAll(context)
     }
